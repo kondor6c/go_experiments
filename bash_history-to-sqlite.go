@@ -16,15 +16,15 @@ import (
 	"database/sql"
 	"flag"
 	"os"
-	"strings"
 	"strconv"
 	"fmt"
 )
 import _ "github.com/mattn/go-sqlite3" //I don't understand this:  https://stackoverflow.com/questions/21220077/what-does-an-underscore-in-front-of-an-import-statement-mean-in-golang 
 
 func create_db(sqliteFile *string) ( *sql.DB ) { 
-	db, _ := sql.Open("sqlite3", *sqliteFile) //we tell the standard lib sql we want to use sqlite3 driver
-	create_statement, _ := db.Prepare("CREATE TABLE IF NOT EXISTS bash_history (id INTEGER PRIMARY KEY, exec_time INTEGER, host TEXT, command TEXT, exit_status INTEGER, bookmark TEXT, tag TEXT, frequency INTEGER)")
+	db, err := sql.Open("sqlite3", *sqliteFile) //we tell the standard lib sql we want to use sqlite3 driver
+	Catcher(err) // I cringe now that I see I was discarding the error, this caused me issues
+	create_statement, _ := db.Prepare("CREATE TABLE IF NOT EXISTS bash_history (id INTEGER PRIMARY KEY, exec_time INTEGER, user_host_location TEXT, command TEXT, exit_status INTEGER, bookmark TEXT, tag TEXT, frequency INTEGER)")
 	create_statement.Exec()
 	create_statement, _ = db.Prepare("CREATE TABLE IF NOT EXISTS quick_history_table (id INTEGER PRIMARY KEY, exec_time INTEGER, host TEXT, commmand TEXT )")
 	create_statement.Exec()
@@ -50,27 +50,38 @@ type HistRow struct {
 func main() {
 	var (
 		dbfile = flag.String("dbfile",".bash_history.sqlite","sqlite database file location")
-		//bookmark = flag.String("bookmark","!last","command id/line to bookmark")
+		//bookmark = flag.String("bookmark","#!!last","command id/line to bookmark")
 		//full_scan = flag.Bool("full",false,"scan full bash history instead of just the end")
 		//install = flag.Bool("install",false,"Install bashquil to PROMPT_COMMAND")
 	)
 
 	flag.Parse()
 	db := create_db(dbfile)
-	sql_history, _ := db.Prepare("INSERT INTO bash_history (exec_time, host, command, exit_status, bookmark, tag, frequency) VALUES (?, ?, ?, ?, ?, ?)")
+	sql_history, _ := db.Prepare("INSERT INTO bash_history (exec_time, user_host_location, command, exit_status, bookmark, tag, frequency) VALUES (?, ?, ?, ?, ?, ?)")
 	var env_setting []string = os.Environ()
 	var tty string
 	for index, _ := range env_setting {
+		fmt.Println(env_setting[index])
 		if env_setting[index] == "GPG_TTY" {
 			tty = env_setting[index]
 			break
 		}
 	}
-	var user string = os.Getenv("USER")
+	//user := []byte(os.Getenv("USER"))
 	hostname, _ := os.Hostname()
-	location := []string{ hostname, tty }
-	hostname = strings.Join(location,":")
-	copy(hostname[1:],user)
+	//location := []byte(hostname)
+	// https://github.com/go101/go101/wiki/How-to-efficiently-clone-a-slice%3F
+	// how is a slice of a slice laid out in memory?
+	// How efficient are bytes and byte array's compared to strings? I imagine byte arrays are more efficient, but how
+	// three dots ... variadaric
+	// Totally could have done all this with string operations and builder, but I wanted to use the builtin append and attempt copy()
+	user := append([]byte(os.Getenv("USER")), []byte("@")[0])
+	hostnames := append([]byte(hostname), []byte(":")[0])
+
+	location := append(user, hostnames...)
+	fmt.Printf("%s\n", location)
+	location = append(location, []byte(tty)...)
+	fmt.Printf("%s\n", location)
 	bash_history_File, _ := os.Open("/home/kondor6c/.bash_history")
 	bash_history := bufio.NewReader(bash_history_File)
 	staged_row := &HistRow{host: hostname }
