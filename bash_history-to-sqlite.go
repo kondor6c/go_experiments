@@ -17,7 +17,6 @@ import (
 	"flag"
 	"fmt"
 	_ "github.com/mattn/go-sqlite3"
-	"io"
 	"os"
 	"runtime/pprof"
 	"strconv"
@@ -30,6 +29,7 @@ func create_db(sqliteFile *string) *sql.DB {
 	create_statement.Exec()
 	create_statement, _ = db.Prepare("CREATE TABLE IF NOT EXISTS quick_history_table (id INTEGER PRIMARY KEY, exec_time INTEGER, host TEXT, commmand TEXT )")
 	create_statement.Exec()
+	create_statement.Commit()
 	return db //return the actual values, the function will point to this value
 }
 
@@ -61,8 +61,7 @@ func main() {
 
 	flag.Parse()
 	db := create_db(dbfile)
-	sql_history, err := db.Prepare("INSERT INTO bash_history (exec_time, user_host_location, command, exit_status, bookmark, tag, frequency) VALUES (?, ?, ?, ?, ?, ?, ?)")
-	Catcher(err)
+	sql_history, _ := db.Prepare("INSERT INTO bash_history (exec_time, user_host_location, command, exit_status, bookmark, tag, frequency) VALUES (?, ?, ?, ?, ?, ?)")
 	hostname, _ := os.Hostname()
 	tty, _ := os.Readlink("/proc/self/fd/0")
 	// https://github.com/go101/go101/wiki/How-to-efficiently-clone-a-slice%3F
@@ -70,25 +69,18 @@ func main() {
 	// How efficient are bytes and byte array's compared to strings? I imagine byte arrays are more efficient, but how
 	// three dots ... variadaric
 	// Totally could have done all this with string operations and builder, but I wanted to use the builtin append and attempt copy()
-
 	user := append([]byte(os.Getenv("USER")), []byte("@")[0])
 	host := append([]byte(hostname), []byte(":")[0])
+
 	location := append(user, host...)
 	location = append(location, []byte(tty)...)
-
-	bash_history_File, fileErr := os.Open("/home/kondor6c/.bash_history")
-	Catcher(fileErr)
+	bash_history_File, _ := os.Open("/home/kondor6c/.bash_history")
 	bash_history := bufio.NewReader(bash_history_File)
-	staged_row := &HistRow{host: string(location)}
+	staged_row := &HistRow{host: hostname}
 
 	for {
 		line, err := bash_history.ReadString('\n')
-		if err == io.EOF {
-			db.Close()
-			os.Exit(3)
-		} else if err != nil {
-			panic(err)
-		}
+		Catcher(err)
 		staged_row.get(line)
 		exec_line, err := bash_history.ReadString('\n')
 		Catcher(err)
@@ -106,11 +98,10 @@ https://stackoverflow.com/questions/32208363/returning-value-vs-pointer-in-go-co
 func (hist *HistRow) get(line string) { //nil pointer panics avoided by using a pointer
 	if len(line) == 11 { //If the line is a timestamp
 		hist.exec_time, _ = strconv.Atoi(line[1:10])
-	} else if len(line) > 2 { // I totally need a better check! this fails on my favorite command "w"
+	} else if len(line) > 2 {
 		hist.command = line
 	} else {
-		fmt.Println("error on history line")
-		fmt.Println(line)
+		fmt.Println("error")
 	}
 }
 
