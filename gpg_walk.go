@@ -62,5 +62,6 @@ func (mainKeyRing *KeyRing) ReadKeyRing(file_name string) (*KeyRing, error) {
 	}
 	pubkeyring, err := openpgp.ReadKeyRing(file_pub_ring) //need to see what happens when a new file is passed, ie a new/blank public keyring
 	errCatcher(err)
+
 	keyring := os.Open(file_name)
 }
