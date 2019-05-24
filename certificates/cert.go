@@ -3,9 +3,11 @@ package main
 // TODO! defer, flags with default values, router/decider of actions and keypairs. Functions should have interfaces
 // Pemfile is probably the best example of interfaces
 import (
+	"bytes"
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
+	_ "errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -32,11 +34,6 @@ type privateData struct { //TODO make this an interface!
 	mainAction string
 	mode       string
 	options    []string
-}
-
-type webPage struct {
-	Title string
-	Body  []byte
 }
 
 type configStore struct {
@@ -72,7 +69,7 @@ func decideRoute(c configStore) *privateData {
 		if i == "None" {
 			continue
 		}
-		pemData := pemFile(i)
+		pemData := pemFile(fileOpen(i))
 		curAction.addPem(pemData)
 	}
 	if curAction.key != nil && curAction.mainAction == "copy" { //I still do not know how to check if x509.Certificate is not nil, (anonymous struct?)
@@ -95,25 +92,47 @@ func decideRoute(c configStore) *privateData {
 func caHandler(w http.ResponseWriter, r *http.Request) {
 }
 func mainHandler(w http.ResponseWriter, r *http.Request) {
-
 	actions := []string{"cert", "csr", "key", "ca"}
-}
 
-func certHandler(w http.ResponseWriter, r *http.Request) {
-	c := r.FormValue("cert")
-	fmt.Sprintf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", c.Subject.CommonName, c.Subject.Locality, c.Subject.Organization, c.Subject.OrganizationalUnit, c.Subject.ExtraNames, c.KeyUsage, c.Issuer, c.Signature, c.DNSNames, c.NotAfter)
-	formSend := `
-    <form action="/{{.Action}}" method="post">
-      <div><textarea name="add cert PEM" rows="20" cols="80">
-        <label for="add">{{.Action}}:</label>
-        <input type="text" id="{{.Action}}" name="send{{.Action}}">
+	htmlForm := `
+	{{ range .actions }}
+    <form action="/{{.}}" method="post">
+      <div><textarea name="add {{.}} PEM" rows="20" cols="80">
+        <label for="add">{{.}}:</label>
+        <input type="text" id="{{.}}" name="send{{.}}">
       </textarea></div>
       <div>
         <div class="button">
-        <button type="submit">Submit {{.Action}}</button>
+        <button type="submit">Submit {{.}}</button>
       </div>
+	  <h3>OR (Not Working, currently planned) </h3>
+	  <form method="post" enctype="multipart/form-data">
+       <div>
+         <label for="file">Choose file to upload (not working yet!) </label>
+         <input type="file" id="file-{{.}}" accept=".pem,.crt, text/plain, application/x-java-jce-keystore, application/x-java-keystore, application/x-x509-ca-cert, application/x-pem-file, application/x-pkcs12" > 
+       </div>
+       <div>
+         <button>Submit</button>
+       </div>
+      </form>
     </form>
+	{{ end }}
 `
+	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, htmlForm, htmlFoot)
+	templatePage, _ := template.New("Request").Parse(joinedPage)
+	//title := r.URL.Path(len("/read/"):]
+	templatePage.Execute(w, actions)
+
+}
+
+func certHandler(w http.ResponseWriter, r *http.Request) {
+	cert_form := r.FormValue("cert")
+	webData := &privateData{}
+	if len(cert_form) > 1 {
+		cert_read := bytes.NewBufferString(cert_form)
+		webData.addPem(pemFile(cert_read))
+		//page_body := fmt.Sprintf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", c.Subject.CommonName, c.Subject.Locality, c.Subject.Organization, c.Subject.OrganizationalUnit, c.Subject.ExtraNames, c.KeyUsage, c.Issuer, c.Signature, c.DNSNames, c.NotAfter)
+	}
 }
 
 func keyHandler(w http.ResponseWriter, r *http.Request) {
@@ -247,10 +266,21 @@ func copyCert(source x509.Certificate) x509.CertificateRequest {
 }
 
 // pemFile : a core function, takes a file returns the decoded PEM
-func pemFile(filename string) *pem.Block {
+func pemFile(file io.Reader) *pem.Block {
+	bytesAll, _ := ioutil.ReadAll(file)
+	pemContent, rest := pem.Decode(bytesAll)
+	log.Println(pemContent.Type)
+	if rest != nil && pemContent == nil {
+		log.Println("no _valid_ pem data was passed. Please check")
+		// consider printing rest
+	}
+	return pemContent
+}
+
+func fileOpen(filename string) io.Reader {
+	_, err := os.Stat(filename)
 	var fileRead io.Reader
 	var oerr error
-	_, err := os.Stat(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
 			log.Printf("The file specified '%v' does not exist", filename)
@@ -267,14 +297,7 @@ func pemFile(filename string) *pem.Block {
 			log.Fatal(oerr)
 		}
 	}
-	bytesAll, _ := ioutil.ReadAll(fileRead)
-	pemContent, rest := pem.Decode(bytesAll)
-	log.Println(pemContent.Type)
-	if rest != nil && pemContent == nil {
-		log.Println("no _valid_ pem data was passed. Please check")
-		// consider printing rest
-	}
-	return pemContent
+	return fileRead
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
