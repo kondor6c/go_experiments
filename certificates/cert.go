@@ -46,6 +46,7 @@ type configStore struct {
 	KeyOut          string
 	ActionPrimary   string
 	ActionSecondary string
+	ActionChoices   []string
 }
 
 // Meant to simulate the "context" package, it seems to serve the same purpose
@@ -89,23 +90,40 @@ func decideRoute(c configStore) *privateData {
 	return curAction
 }
 
-func caHandler(w http.ResponseWriter, r *http.Request) {
+func addHandler(w http.ResponseWriter, r *http.Request) {
+	webData := &privateData{}
+	switch {
+	case len(certForm) > 0:
+		certRead := bytes.NewBufferString(certForm)
+		webData.addPem(pemFile(certRead))
+	case len(keyForm) > 0:
+		keyRead := bytes.NewBufferString(keyForm)
+		webData.addPem(pemFile(keyRead))
+	case len(caForm) > 0:
+		caRead := bytes.NewBufferString(caForm)
+		webData.addPem(pemFile(caRead))
+	case len(csrForm) > 0:
+		csrRead := bytes.NewBufferString(csrForm)
+		webData.addPem(pemFile(csrRead))
+	}
 }
 func mainHandler(w http.ResponseWriter, r *http.Request) {
-	actions := []string{"cert", "csr", "key", "ca"}
-
-	htmlForm := `
-	{{ range .actions }}
-    <form action="/{{.}}" method="post">
-      <div><textarea name="add {{.}} PEM" rows="20" cols="80">
-        <label for="add">{{.}}:</label>
-        <input type="text" id="{{.}}" name="send{{.}}">
+	pageConfig := &configStore{ActionChoices: []string{"cert", "csr", "key", "ca"}}
+	certForm := r.FormValue("cert")
+	keyForm := r.FormValue("key")
+	caForm := r.FormValue("ca")
+	csrForm := r.FormValue("csr")
+	htmlFileUpload := `
+	</TABLE> <BR> {{ range .ActionChoices }}
+    <form action="/add" method="post" autocomplete="off">
+      <label for="add">{{.}}:</label>
+      <textarea name="{{.}}" id="add-{{.}}" rows="10" cols="80">
       </textarea></div>
       <div>
         <div class="button">
         <button type="submit">Submit {{.}}</button>
       </div>
-	  <h3>OR (Not Working, currently planned) </h3>
+	  <h4>OR (Not Working, currently planned) </h4>
 	  <form method="post" enctype="multipart/form-data">
        <div>
          <label for="file">Choose file to upload (not working yet!) </label>
@@ -118,21 +136,21 @@ func mainHandler(w http.ResponseWriter, r *http.Request) {
     </form>
 	{{ end }}
 `
-	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, htmlForm, htmlFoot)
+	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, htmlFileUpload, htmlFoot)
 	templatePage, _ := template.New("Request").Parse(joinedPage)
 	//title := r.URL.Path(len("/read/"):]
-	templatePage.Execute(w, actions)
-
+	templatePage.Execute(w, pageConfig)
 }
 
 func certHandler(w http.ResponseWriter, r *http.Request) {
-	cert_form := r.FormValue("cert")
+	certForm := r.FormValue("cert")
 	webData := &privateData{}
-	if len(cert_form) > 1 {
-		cert_read := bytes.NewBufferString(cert_form)
-		webData.addPem(pemFile(cert_read))
+	if len(certForm) > 1 {
+		certRead := bytes.NewBufferString(certForm)
+		webData.addPem(pemFile(certRead))
 		//page_body := fmt.Sprintf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", c.Subject.CommonName, c.Subject.Locality, c.Subject.Organization, c.Subject.OrganizationalUnit, c.Subject.ExtraNames, c.KeyUsage, c.Issuer, c.Signature, c.DNSNames, c.NotAfter)
 	}
+	http.Redirect(w, r, "/view", http.StatusSeeOther)
 }
 
 func keyHandler(w http.ResponseWriter, r *http.Request) {
@@ -162,15 +180,17 @@ func csrHandler(w http.ResponseWriter, r *http.Request) {
 	//fmt.Fprintf(w, "%s %s", htmlHead, htmlFoot)
 }
 
-//func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
-//	t, _ := template.Execute(w, template.HTML(tmpl))
-//}
+func pageComposer(formValue string) *privateData {
+	pageData := &privateData{}
+
+	return pageData
+}
 
 func (p *privateData) keyPairReq() []byte {
-	randy, _ := os.Open("/dev/random")
-	defer randy.Close()
+	devRand, _ := os.Open("/dev/random")
+	defer devRand.Close()
 
-	csr, genCsrErr := x509.CreateCertificateRequest(randy, &p.req, p.key)
+	csr, genCsrErr := x509.CreateCertificateRequest(devRand, &p.req, p.key)
 	Catcher(genCsrErr)
 	return csr
 }
