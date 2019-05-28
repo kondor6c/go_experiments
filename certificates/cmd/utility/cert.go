@@ -5,62 +5,29 @@ package main
 import (
 	"bytes"
 	"crypto"
+	"crypto/md5"
+	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	_ "errors"
+	"errors"
 	"flag"
-	"fmt"
+	"fmt" //TODO remove entirely, I believe this is "code smell"
 	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 // Catcher : Generic Catch all
 func Catcher(err error) {
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 }
-
-type privateData struct { //TODO make this an interface!
-	key        crypto.PrivateKey
-	cert       x509.Certificate
-	req        x509.CertificateRequest
-	auth       []x509.Certificate
-	trust      x509.CertPool
-	mainAction string
-	mode       string
-	options    []string
-}
-
-type configStore struct {
-	List            string //
-	CertIn          string
-	CaIn            string
-	KeyIn           string
-	CertOut         string
-	CaOut           string
-	KeyOut          string
-	ActionPrimary   string
-	ActionSecondary string
-	ActionChoices   []string
-}
-
-// Meant to simulate the "context" package, it seems to serve the same purpose
-type preText interface {
-}
-
-const htmlHead template.HTML = `<HTML>
-  <HEAD><TITLE>Certificate Utility WebUI</TITLE></HEAD>
-  <BODY>
-  <TABLE>
-  <TR><TD>CN</TD><TD>L</TD><TD>O</TD><TD>OU</TD><TD>Email</TD><TD>SAN</TD><TD>Issuer</TD><TD>Expire</TD></TR>
-`
-
-const htmlFoot template.HTML = `</BODY></HTML>`
 
 // decideRoute send a command to the correct function according to options
 func decideRoute(c configStore) *privateData {
@@ -80,6 +47,8 @@ func decideRoute(c configStore) *privateData {
 	} else if curAction.key != nil && curAction.mainAction == "gen-template" {
 
 	} else if curAction.mainAction == "edit-csr" {
+	} else if c.ActionPrimary == "web-ui" {
+		curAction.mainAction = "web-ui"
 
 	} else if curAction.mainAction == "ca-check" && len(curAction.auth) >= 1 {
 	} else if curAction.mainAction == "trust-check" && len(curAction.auth) >= 1 {
@@ -90,100 +59,109 @@ func decideRoute(c configStore) *privateData {
 	return curAction
 }
 
-func addHandler(w http.ResponseWriter, r *http.Request) {
-	webData := &privateData{}
-	switch {
-	case len(certForm) > 0:
-		certRead := bytes.NewBufferString(certForm)
-		webData.addPem(pemFile(certRead))
-	case len(keyForm) > 0:
-		keyRead := bytes.NewBufferString(keyForm)
-		webData.addPem(pemFile(keyRead))
-	case len(caForm) > 0:
-		caRead := bytes.NewBufferString(caForm)
-		webData.addPem(pemFile(caRead))
-	case len(csrForm) > 0:
-		csrRead := bytes.NewBufferString(csrForm)
-		webData.addPem(pemFile(csrRead))
-	}
+func (p *privateData) configHandler(w http.ResponseWriter, r *http.Request) {
+
 }
-func mainHandler(w http.ResponseWriter, r *http.Request) {
-	pageConfig := &configStore{ActionChoices: []string{"cert", "csr", "key", "ca"}}
-	certForm := r.FormValue("cert")
-	keyForm := r.FormValue("key")
-	caForm := r.FormValue("ca")
-	csrForm := r.FormValue("csr")
-	htmlFileUpload := `
-	</TABLE> <BR> {{ range .ActionChoices }}
-    <form action="/add" method="post" autocomplete="off">
-      <label for="add">{{.}}:</label>
-      <textarea name="{{.}}" id="add-{{.}}" rows="10" cols="80">
-      </textarea></div>
-      <div>
-        <div class="button">
-        <button type="submit">Submit {{.}}</button>
-      </div>
-	  <h4>OR (Not Working, currently planned) </h4>
-	  <form method="post" enctype="multipart/form-data">
-       <div>
-         <label for="file">Choose file to upload (not working yet!) </label>
-         <input type="file" id="file-{{.}}" accept=".pem,.crt, text/plain, application/x-java-jce-keystore, application/x-java-keystore, application/x-x509-ca-cert, application/x-pem-file, application/x-pkcs12" > 
-       </div>
-       <div>
-         <button>Submit</button>
-       </div>
-      </form>
-    </form>
-	{{ end }}
-`
-	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, htmlFileUpload, htmlFoot)
+
+func (p *privateData) addHandler(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+	}
+
+	for k, valueList := range r.PostForm {
+		for _, v := range valueList {
+			if len(v) > 1 {
+				formRead := bytes.NewBufferString(v)
+				p.addPem(pemFile(formRead))
+				p.mainAction = k
+				log.Printf("Added: %s", p.mainAction)
+			}
+		}
+	}
+	http.Redirect(w, r, "/view", http.StatusTemporaryRedirect)
+}
+func getPublicKeyDigest(pkey rsa.PublicKey) string {
+	hexString := fmt.Sprintf("%X", pkey.N)
+	md5sum := md5.New()
+	md5sum.Write([]byte(hexString))
+	digest := fmt.Sprintf("%x\n", md5sum.Sum(nil))
+	return digest
+}
+
+func fetchRemoteCert(connectHost string) ([]*x509.Certificate, error) { //TODO offer SOCKS and remote resolution (dialer), Golang already supports this via HTTP_PROXY?
+	config := tls.Config{InsecureSkipVerify: true}
+	conn, err := tls.Dial("tcp", connectHost, &config)
+	var rerr error
+	if err != nil {
+		log.Println(err)
+		rerr = errors.New("An error occurred while trying to remotely fetch the certificate")
+	}
+	defer conn.Close()
+	log.Println("client: connected to: ", conn.RemoteAddr())
+	state := conn.ConnectionState()
+
+	return state.PeerCertificates, rerr
+}
+
+func getiCalCert(c x509.Certificate) io.Reader {
+	type workingCert struct {
+		CommonName string
+		expireDate time.Time
+		SANs       []string
+	}
+	iCal := new(bytes.Buffer)
+	iCalData := workingCert{c.Subject.CommonName, c.NotAfter, c.DNSNames}
+	templatePage, _ := template.New("Request").Parse(iCalExpire)
+	templatePage.Execute(iCal, iCalData)
+
+	return iCal
+}
+
+func (p *privateData) viewHandler(w http.ResponseWriter, r *http.Request) {
+	var pageBody string
+	if p.cert.Signature != nil {
+		publicKey := p.cert.PublicKey.(*rsa.PublicKey)
+		keyDigest := getPublicKeyDigest(*publicKey)
+		certRow := fmt.Sprintf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", p.cert.Subject.CommonName, p.cert.Subject.Locality, p.cert.Subject.Organization, p.cert.Subject.OrganizationalUnit, p.cert.Subject.ExtraNames, p.cert.Issuer, p.cert.DNSNames, p.cert.NotAfter, keyDigest)
+		pageBody = fmt.Sprintf("%s\n%s\n%s\n", pageBody, certView, certRow)
+	}
+	if p.key != nil {
+		privKey := p.key.(*rsa.PrivateKey)
+		privKeyDigest := getPublicKeyDigest(privKey.PublicKey)
+		keyRow := fmt.Sprintf("<TR><TD>%d</TD><TD>NA</TD><TD>%s</TD></TR>\n</TABLE>", privKey.PublicKey.N.BitLen(), privKeyDigest)
+		pageBody = fmt.Sprintf("%s\n%s\n%s", pageBody, keyView, keyRow)
+		log.Println("Private Key public Modulus bytes md5")
+		log.Println(privKeyDigest)
+	}
+	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, pageBody, htmlFoot)
 	templatePage, _ := template.New("Request").Parse(joinedPage)
-	//title := r.URL.Path(len("/read/"):]
+	templatePage.Execute(w, p.cert)
+}
+
+func (p *privateData) mainHandler(w http.ResponseWriter, r *http.Request) {
+	pageConfig := &configStore{ActionChoices: []string{"cert", "csr", "key", "ca"}}
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, mainPage, htmlFoot)
+	templatePage, _ := template.New("Request").Parse(joinedPage)
 	templatePage.Execute(w, pageConfig)
 }
 
-func certHandler(w http.ResponseWriter, r *http.Request) {
-	certForm := r.FormValue("cert")
-	webData := &privateData{}
-	if len(certForm) > 1 {
-		certRead := bytes.NewBufferString(certForm)
-		webData.addPem(pemFile(certRead))
-		//page_body := fmt.Sprintf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", c.Subject.CommonName, c.Subject.Locality, c.Subject.Organization, c.Subject.OrganizationalUnit, c.Subject.ExtraNames, c.KeyUsage, c.Issuer, c.Signature, c.DNSNames, c.NotAfter)
-	}
-	http.Redirect(w, r, "/view", http.StatusSeeOther)
+func (p *privateData) fetchHandler(w http.ResponseWriter, r *http.Request) {
+	connectString := r.FormValue("rAddress") + ":" + r.FormValue("rPort")
+	fetchRemoteCert(connectString)
 }
 
-func keyHandler(w http.ResponseWriter, r *http.Request) {
-}
-func csrHandler(w http.ResponseWriter, r *http.Request) {
-	//fmt.Sprintf("tableRow": `<TR><TD>{{.cn}}</TD><TD>{{.l}}</TD><TD>{{.o}}</TD><TD>{{.ou}}</TD><TD>{{.email}}</TD><TD>{{.use}}</TD><TD>{{.ca}}</TD><TD>{{.expire}}</TD></TR>
-
+func (p *privateData) editHandler(w http.ResponseWriter, r *http.Request) {
+	// Not implemented yet, placeholder
 	var bodyTmpl = map[string]string{
 		"Action": "CSR",
 	}
-	formSend := `
-    <form action="/{{.Action}}" method="post">
-      <div><textarea name="{{.Action}} PEM" rows="20" cols="80">
-        <label for="name">{{.Action}}:</label>
-        <input type="text" id="{{.Action}}" name="send{{.Action}}">
-      </textarea></div>
-      <div>
-        <div class="button">
-        <button type="submit">Submit {{.Action}}</button>
-      </div>
-    </form>
-`
-	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, formSend, htmlFoot)
+	joinedPage := fmt.Sprintf("%s\n%s", htmlHead, htmlFoot)
 	templatePage, _ := template.New("Request").Parse(joinedPage)
-	//title := r.URL.Path(len("/read/"):]
 	templatePage.Execute(w, bodyTmpl)
-	//fmt.Fprintf(w, "%s %s", htmlHead, htmlFoot)
-}
-
-func pageComposer(formValue string) *privateData {
-	pageData := &privateData{}
-
-	return pageData
 }
 
 func (p *privateData) keyPairReq() []byte {
@@ -203,6 +181,10 @@ func (p *privateData) addPem(dataPem *pem.Block) {
 			Catcher(err)
 			p.key = pkcs8.(*crypto.PrivateKey) // hmm
 		} else {
+			p.key = key
+		}
+	} else if dataPem.Type == "EC PRIVATE KEY" {
+		if key, err := x509.ParseECPrivateKey(dataPem.Bytes); err == nil {
 			p.key = key
 		}
 	} else if dataPem.Type == "CERTIFICATE" {
@@ -247,17 +229,18 @@ func gatherOpts() configStore {
 func main() {
 	var optCertIn string
 	opts := gatherOpts()
+	dat := decideRoute(opts)
 
 	if opts.ActionPrimary == "web-ui" {
-		http.HandleFunc("/", mainHandler)
-		http.HandleFunc("/ca", caHandler)
-		http.HandleFunc("/csr", csrHandler)
-		http.HandleFunc("/key", keyHandler)
-		http.HandleFunc("/cert", certHandler)
+		http.HandleFunc("/", dat.mainHandler)
+		http.HandleFunc("/add", dat.addHandler)
+		http.HandleFunc("/view", dat.viewHandler)
+		http.HandleFunc("/edit", dat.editHandler)
+		http.HandleFunc("/fetch", dat.fetchHandler)
+		http.HandleFunc("/config", dat.configHandler)
 		log.Fatal(http.ListenAndServe(":5000", nil))
 	}
 	fmt.Println(optCertIn)
-	dat := decideRoute(opts)
 	checkCert(dat.cert)
 
 }
@@ -289,10 +272,8 @@ func copyCert(source x509.Certificate) x509.CertificateRequest {
 func pemFile(file io.Reader) *pem.Block {
 	bytesAll, _ := ioutil.ReadAll(file)
 	pemContent, rest := pem.Decode(bytesAll)
-	log.Println(pemContent.Type)
 	if rest != nil && pemContent == nil {
 		log.Println("no _valid_ pem data was passed. Please check")
-		// consider printing rest
 	}
 	return pemContent
 }
