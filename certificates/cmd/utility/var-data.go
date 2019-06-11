@@ -71,13 +71,14 @@ END:VCALENDAR
 	<P>
 	Only RSA keys are supported currently
 	To obtain the modulus from openssl remember to not include the newline character or any other fields. All characters should be upper case.
+	Go now ignores the Common Name if is a SAN is found.
 	When remotely connecting, you can use a SOCKS proxy by setting the environment variable HTTP_PROXY="socks5://127.0.0.1:5544"
 	</BODY></HTML>`
 
 	certView template.HTML = `
 		<P>[<A HREF="/edit">edit</A>]</P>
     	<TABLE style="width:100%" >
-    	<TR><TD>CN</TD><TD>L</TD><TD>O</TD><TD>OU</TD><TD>Email</TD><TD>Issuer</TD><TD>Key Usage</TD><TD>SAN</TD><TD>Expire</TD></TR>
+    	<TR><TD>CN</TD><TD>L</TD><TD>O</TD><TD>OU</TD><TD>Email</TD><TD>Issuer</TD><TD>SAN</TD><TD>Expire</TD></TR>
 `
 	keyView template.HTML = `
  	<TABLE style="width:100%" >

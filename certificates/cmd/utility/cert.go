@@ -39,9 +39,11 @@ func getPublicKeyDigest(pkey rsa.PublicKey) string {
 }
 
 func fetchRemoteCert(connectHost string) ([]*x509.Certificate, error) { //TODO offer SOCKS and remote resolution (dialer), Golang already supports this via HTTP_PROXY?
+
 	config := tls.Config{InsecureSkipVerify: true}
 	conn, err := tls.Dial("tcp", connectHost, &config)
 	var rerr error
+	//var sentCertificate []x509.Certificate
 	if err != nil {
 		log.Println(err)
 		rerr = errors.New("An error occurred while trying to remotely fetch the certificate")
@@ -49,7 +51,7 @@ func fetchRemoteCert(connectHost string) ([]*x509.Certificate, error) { //TODO o
 	defer conn.Close()
 	log.Println("client: connected to: ", conn.RemoteAddr())
 	state := conn.ConnectionState()
-
+	// reflect.ValueOf(state).Interface().(newType)
 	return state.PeerCertificates, rerr
 }
 
@@ -119,10 +121,8 @@ func gatherOpts() configStore {
 	flag.StringVar(&opt.CertOut, "cert-out", "None", "key for certificate")
 	//flagSet.Var(&optMap["List"], "None", "list of options to pass delimiter ',' [not implemented]")
 	flag.StringVar(&opt.CaOut, "CA-out", "None", "action to take")
-	fmt.Println("args")
 	flag.Parse()
-	fmt.Println(os.Args)
-	fmt.Println(opt.KeyIn)
+	log.Printf("obtained arguments: %s", os.Args)
 	if flag.NFlag() < 1 && os.Stdin == nil {
 		flag.PrintDefaults()
 	}
@@ -145,10 +145,9 @@ func main() {
 	}
 	fmt.Println(optCertIn)
 	checkCert(dat.cert)
-
 }
 
-func checkCert(c x509.Certificate) []string {
+func checkCert(c x509.Certificate) []string { //Poor quality, only written for cli, should improve
 	head := fmt.Sprintf("The Name attributes (includes CN): ")
 	subject := fmt.Sprintf("Subject: %v", c.Subject) // pkix.Name, country, org, ou, l, p, street, zip, serial, cn, extra... Additional elements in a DN can be added in via ExtraName, <=EMAIL
 	issuing := fmt.Sprintf("Issuer: %v", c.Issuer)
@@ -181,27 +180,30 @@ func pemFile(file io.Reader) *pem.Block {
 	return pemContent
 }
 
-func fileOpen(filename string) io.Reader {
-	_, err := os.Stat(filename)
-	var fileRead io.Reader
-	var oerr error
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("The file specified '%v' does not exist", filename)
-		} else if os.IsPermission(err) {
-			log.Printf("Unable to read file '%v' due to permissions", filename)
-		} else {
-			log.Printf("a general has occurred on file '%v', it is likely file related", filename)
-			panic(err)
-		}
-	} else {
-		fileRead, oerr = os.Open(filename)
-		//defer fileRead.Close()
-		if oerr != nil {
-			log.Fatal(oerr)
+func getChain(certs []x509.Certificate) [][]*x509.Certificate {
+	intermediatePool := x509.NewCertPool()
+	rootPool := x509.NewCertPool()
+	var certificate x509.Certificate
+	compareCert := x509.VerifyOptions{Intermediates: intermediatePool, Roots: rootPool}
+	// This feels rather brute force, I can revisit this later with hard calculations of signatures and public keys from each
+	for _, c := range certs {
+		if c.IsCA == true {
+			intermediatePool.AddCert(&c)
+			rootPool.AddCert(&c)
+		} else if c.KeyUsage == x509.KeyUsageDigitalSignature {
+			certificate = c
 		}
 	}
-	return fileRead
+	verifiedBundle, err := certificate.Verify(compareCert)
+	if err != nil {
+		log.Println(err)
+		sysRoot, err := x509.SystemCertPool()
+		Catcher(err)
+		failedChain, err := certificate.Verify(x509.VerifyOptions{Roots: sysRoot})
+		verifiedBundle = failedChain
+		Catcher(err)
+	}
+	return verifiedBundle
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////

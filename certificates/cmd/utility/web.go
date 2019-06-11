@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"crypto/rsa"
+	"fmt" //TODO remove entirely, I believe this is "code smell"
 	"html/template"
 	"log"
-	"fmt" //TODO remove entirely, I believe this is "code smell"
 	"net/http"
 )
 
@@ -43,11 +43,20 @@ func (p *privateData) mainHandler(w http.ResponseWriter, r *http.Request) {
 
 func (p *privateData) fetchHandler(w http.ResponseWriter, r *http.Request) {
 	connectString := r.FormValue("rAddress") + ":" + r.FormValue("rPort")
-	fetchRemoteCert(connectString)
+	var err error
+	rCert, err := fetchRemoteCert(connectString)
+	if err != nil {
+		log.Println("unable to get remote certificate")
+	}
+	//verifiedRemoteChain := getChain(rCert)
+	log.Println(rCert[0])
+	p.cert = *rCert[0] //dereference
+	log.Println(p.cert.Subject)
+	http.Redirect(w, r, "/view", http.StatusTemporaryRedirect)
+
 }
 
 func (p *privateData) editHandler(w http.ResponseWriter, r *http.Request) {
-	// Not implemented yet, placeholder
 	var bodyTmpl = map[string]string{
 		"Action": "CSR",
 	}
@@ -55,6 +64,8 @@ func (p *privateData) editHandler(w http.ResponseWriter, r *http.Request) {
 	templatePage, _ := template.New("Request").Parse(joinedPage)
 	templatePage.Execute(w, bodyTmpl)
 }
+
+// configHandler: upsert cookie with all settings
 func (p *privateData) configHandler(w http.ResponseWriter, r *http.Request) {
 
 }

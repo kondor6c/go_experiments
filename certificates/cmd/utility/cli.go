@@ -1,5 +1,11 @@
 package main
 
+import (
+	"io"
+	"log"
+	"os"
+)
+
 // decideRoute send a command to the correct function according to options
 func decideRoute(c configStore) *privateData {
 	curAction := &privateData{}
@@ -28,4 +34,27 @@ func decideRoute(c configStore) *privateData {
 
 	}
 	return curAction
+}
+
+func fileOpen(filename string) io.Reader {
+	_, err := os.Stat(filename)
+	var fileRead io.Reader
+	var oerr error
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("The file specified '%v' does not exist", filename)
+		} else if os.IsPermission(err) {
+			log.Printf("Unable to read file '%v' due to permissions", filename)
+		} else {
+			log.Printf("a general has occurred on file '%v', it is likely file related", filename)
+			panic(err)
+		}
+	} else {
+		fileRead, oerr = os.Open(filename)
+		if oerr != nil {
+			log.Fatal(oerr)
+		}
+		// defer fileRead.Close() //I made this as an io.Reader above, do I need to close it??
+	}
+	return fileRead
 }
