@@ -75,10 +75,53 @@ END:VCALENDAR
 	When remotely connecting, you can use a SOCKS proxy by setting the environment variable HTTP_PROXY="socks5://127.0.0.1:5544"
 	</BODY></HTML>`
 
+	editView template.HTML = `
+	<BR>
+    <form action="/edit" method="post" autocomplete="on">
+      <label for="CSR"><h5>Common Name:</h5></label>
+    <textarea name="Common Name" id="edit-csr" rows="2" cols="20" placeholder={{.CommonName}}></textarea></div>
+	  <br>
+      <label for="add"><h5>Locality:</h5></label>
+    <textarea name="Locality" id="edit-csr" rows="2" cols="20">{{.Locality}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Province:</h5></label>
+    <textarea name="Locality" id="edit-csr" rows="2" cols="20">{{.Locality}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Country:</h5></label>
+    <textarea name="Organization" id="edit-csr" rows="2" cols="20">{{.Organization}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Organization:</h5></label>
+    <textarea name="Organization" id="edit-csr" rows="2" cols="20">{{.Organization}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Organizational Unit:</h5></label>
+    <textarea name="OrganizationalUnit" id="edit-csr" rows="2" cols="20">{{.OrganizationalUnit}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Street Address:</h5></label>
+    <textarea name="StreetAddress" id="edit-csr" rows="2" cols="20">{{.StreetAddress}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Postal Code:</h5></label>
+    <textarea name="Postal Code" id="edit-csr" rows="2" cols="20">{{.PostalCode}}</textarea></div>
+	  <br>
+      <label for="add"><h5>Extra Names:</h5></label>
+    <textarea name="Subject Alt Names" id="edit-csr" rows="2" cols="20">{{.ExtraNames}}</textarea></div>
+	  <br>
+      <div>
+        <div class="button">
+        <button type="submit">Generate CSR{{.}}</button>
+      </div>
+	  </form>
+	      <BR>
+    <form action="/csr" method="post" autocomplete="off">
+      <label for="CSR"><h5>CSR:</h5></label>
+    <textarea name="CSR" id="csr-content" rows="30" cols="80">{{.CSR}}</textarea></div>
+	</form>
+      <br>
+
+`
 	certView template.HTML = `
 		<P>[<A HREF="/edit">edit</A>]</P>
     	<TABLE style="width:100%" >
-    	<TR><TD>CN</TD><TD>L</TD><TD>O</TD><TD>OU</TD><TD>Email</TD><TD>Issuer</TD><TD>SAN</TD><TD>Expire</TD></TR>
+    	<TR><TD>CN [click to edit]</TD><TD>Locality</TD><TD>Organization</TD><TD>Organiztional Unit</TD><TD>Email</TD><TD>Issuer</TD><TD>Subject Alt Names</TD><TD>Expire [click for calendar event]</TD></TR>
 `
 	keyView template.HTML = `
  	<TABLE style="width:100%" >

@@ -19,7 +19,8 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
+	"os/exec"
+	"runtime"
 )
 
 // Catcher : Generic Catch all, better than just discarding errors
@@ -55,18 +56,15 @@ func fetchRemoteCert(connectHost string) ([]*x509.Certificate, error) { //TODO o
 	return state.PeerCertificates, rerr
 }
 
-func getiCalCert(c x509.Certificate) io.Reader {
-	type workingCert struct {
-		CommonName string
-		expireDate time.Time
-		SANs       []string
-	}
+func (p *privateData) icalHandler(w http.ResponseWriter, r *http.Request) {
 	iCal := new(bytes.Buffer)
-	iCalData := workingCert{c.Subject.CommonName, c.NotAfter, c.DNSNames}
 	templatePage, _ := template.New("Request").Parse(iCalExpire)
-	templatePage.Execute(iCal, iCalData)
+	templatePage.Execute(iCal, p)
+	w.Header().Set("Content-Disposition", "attachment; filename=certificate-expiration.ical")
+	//w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
+	w.Write(iCal.Bytes())
 
-	return iCal
+	//http.ServeFile(w, r, "certificate-expiration.ical", iCal)
 }
 
 func (p *privateData) keyPairReq() []byte {
@@ -79,7 +77,7 @@ func (p *privateData) keyPairReq() []byte {
 }
 
 func (p *privateData) addPem(dataPem *pem.Block) {
-	if dataPem.Type == "RSA PRIVATE KEY" {
+	if dataPem.Type == "RSA PRIVATE KEY" || dataPem.Type == "PRIVATE KEY" {
 		key, err := x509.ParsePKCS1PrivateKey(dataPem.Bytes)
 		if err != nil {
 			pkcs8, err := x509.ParsePKCS8PrivateKey(dataPem.Bytes)
@@ -131,17 +129,35 @@ func gatherOpts() configStore {
 
 func main() {
 	var optCertIn string
+	var err error
 	opts := gatherOpts()
 	dat := decideRoute(opts)
 
-	if opts.ActionPrimary == "web-ui" {
+	if opts.ActionPrimary == "web-ui" || opts.ActionPrimary == "web-server" {
 		http.HandleFunc("/", dat.mainHandler)
 		http.HandleFunc("/add", dat.addHandler)
 		http.HandleFunc("/view", dat.viewHandler)
+		http.HandleFunc("/view/ical", dat.icalHandler)
 		http.HandleFunc("/edit", dat.editHandler)
 		http.HandleFunc("/fetch", dat.fetchHandler)
 		http.HandleFunc("/config", dat.configHandler)
 		log.Fatal(http.ListenAndServe(":5000", nil))
+		url := "http://127.0.0.1:5000/"
+		if opts.ActionPrimary == "web-ui" {
+			// Yanked from a gist, totally suits my needs here
+			switch runtime.GOOS {
+			case "linux":
+				err = exec.Command("xdg-open", url).Start()
+			case "windows":
+				err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+			case "darwin":
+				err = exec.Command("open", url).Start()
+			default:
+				err = fmt.Errorf("unsupported platform")
+			}
+			Catcher(err)
+		}
+
 	}
 	fmt.Println(optCertIn)
 	checkCert(dat.cert)
@@ -154,7 +170,6 @@ func checkCert(c x509.Certificate) []string { //Poor quality, only written for c
 	signature := fmt.Sprintf("Signature: %v", c.Signature)
 	sans := fmt.Sprintf("SAN Names: %v", c.DNSNames) //
 	expire := fmt.Sprintf("The expiration is: %v", c.NotAfter)
-	fmt.Printf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", c.Subject.CommonName, c.Subject.Locality, c.Subject.Organization, c.Subject.OrganizationalUnit, c.Subject.ExtraNames, c.Issuer, c.DNSNames, c.NotAfter)
 
 	return []string{head, subject, issuing, signature, sans, expire}
 }

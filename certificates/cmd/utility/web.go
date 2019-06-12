@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/rsa"
 	"fmt" //TODO remove entirely, I believe this is "code smell"
 	"html/template"
@@ -14,7 +15,7 @@ func (p *privateData) viewHandler(w http.ResponseWriter, r *http.Request) {
 	if p.cert.Signature != nil {
 		publicKey := p.cert.PublicKey.(*rsa.PublicKey)
 		keyDigest := getPublicKeyDigest(*publicKey)
-		certRow := fmt.Sprintf("<TR><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD></TR>\n</TABLE>", p.cert.Subject.CommonName, p.cert.Subject.Locality, p.cert.Subject.Organization, p.cert.Subject.OrganizationalUnit, p.cert.Subject.ExtraNames, p.cert.Issuer, p.cert.DNSNames, p.cert.NotAfter, keyDigest)
+		certRow := fmt.Sprintf("<TR><TD><A HREF='/edit'>%s</A></TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD>%s</TD><TD><A HREF='/view/ical'>%s</A></TD></TR>\n</TABLE>", p.cert.Subject.CommonName, p.cert.Subject.Locality, p.cert.Subject.Organization, p.cert.Subject.OrganizationalUnit, p.cert.Subject.ExtraNames, p.cert.Issuer, p.cert.DNSNames, p.cert.NotAfter, keyDigest)
 		pageBody = fmt.Sprintf("%s\n%s\n%s\n", pageBody, certView, certRow)
 	}
 	if p.key != nil {
@@ -57,12 +58,19 @@ func (p *privateData) fetchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *privateData) editHandler(w http.ResponseWriter, r *http.Request) {
-	var bodyTmpl = map[string]string{
-		"Action": "CSR",
+	var newKeyWarn string
+	var mainPage string
+	if p.key == nil {
+		if newKey, err := rsa.GenerateKey(rand.Reader, 4096); err == nil {
+			p.key = newKey
+			newKeyWarn = fmt.Sprintf("<H2>Warning! a NEW key has been created because a Private key was not uploaded</H2><P>\n")
+		}
+		mainPage = newKeyWarn
+
 	}
-	joinedPage := fmt.Sprintf("%s\n%s", htmlHead, htmlFoot)
+	joinedPage := fmt.Sprintf("%s\n%s\n%s", htmlHead, mainPage, htmlFoot)
 	templatePage, _ := template.New("Request").Parse(joinedPage)
-	templatePage.Execute(w, bodyTmpl)
+	templatePage.Execute(w, p.cert.Subject)
 }
 
 // configHandler: upsert cookie with all settings
