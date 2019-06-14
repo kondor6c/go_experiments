@@ -14,7 +14,7 @@ type privateData struct { //TODO make this an interface!
 	trust      x509.CertPool
 	mainAction string
 	mode       string
-	options    []string
+	options    configStore
 }
 
 type configStore struct {
@@ -112,20 +112,21 @@ END:VCALENDAR
 	  </form>
 	      <BR>
     <form action="/csr" method="post" autocomplete="off">
-      <label for="CSR"><h5>CSR:</h5></label>
+    <label for="CSR"><h5>CSR:</h5></label>
     <textarea name="CSR" id="csr-content" rows="30" cols="80">{{.CSR}}</textarea></div>
 	</form>
-      <br>
-
+    <br>
+	<iframe width="1025" height="350" sandbox="allow-same-origin allow-popups allow-forms" target="_blank" src="/view/key"; </iframe>
+    <br>
 `
 	certView template.HTML = `
 		<P>[<A HREF="/edit">edit</A>]</P>
     	<TABLE style="width:100%" >
-    	<TR><TD>CN [click to edit]</TD><TD>Locality</TD><TD>Organization</TD><TD>Organiztional Unit</TD><TD>Email</TD><TD>Issuer</TD><TD>Subject Alt Names</TD><TD>Expire [click for calendar event]</TD></TR>
+    	<TR><TD>CN [click to edit]</TD><TD>Locality</TD><TD>Organization</TD><TD>Organiztional Unit</TD><TD>Email</TD><TD>Issuer</TD><TD>Subject Alt Names</TD><TD>Expire [click for calendar event]</TD><TD>Public Key MD5 hash</TD></TR>
 `
 	keyView template.HTML = `
  	<TABLE style="width:100%" >
- 	<TR><TD>ID</TD><TD>Public Modulus (MD5)</TD><TD>Public Modulus (SHA-1)</TD><TD>Bit Length Size</TD></TR>
+ 	<TR><TD>ID</TD><TD>Bit Length Size</TD><TD>Public Modulus (SHA-1)</TD><TD>Public Modulus (MD5)</TD></TR>
 `
 	mainPage template.HTML = `
 	<BR>

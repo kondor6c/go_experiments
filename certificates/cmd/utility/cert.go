@@ -13,7 +13,6 @@ import (
 	"errors"
 	"flag"
 	"fmt" //TODO remove entirely, I believe this is "code smell"
-	"html/template"
 	"io"
 	"io/ioutil"
 	"log"
@@ -56,15 +55,36 @@ func fetchRemoteCert(connectHost string) ([]*x509.Certificate, error) { //TODO o
 	return state.PeerCertificates, rerr
 }
 
-func (p *privateData) icalHandler(w http.ResponseWriter, r *http.Request) {
-	iCal := new(bytes.Buffer)
-	templatePage, _ := template.New("Request").Parse(iCalExpire)
-	templatePage.Execute(iCal, p)
-	w.Header().Set("Content-Disposition", "attachment; filename=certificate-expiration.ical")
-	//w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
-	w.Write(iCal.Bytes())
+func (p *privateData) getPem(desiredType string) []byte {
+	pemBytes := new(bytes.Buffer)
+	var byteData []byte
+	var pemType string
+	switch desiredType {
+	case "cert":
+		if p.cert.Signature != nil {
+			byteData = p.cert.Raw
+			pemType = "CERTIFICATE"
+		}
+	case "key":
+		if p.key != nil {
+			byteData = x509.MarshalPKCS1PrivateKey(p.key.(*rsa.PrivateKey))
+			pemType = "PRIVATE KEY"
+		}
+	case "csr":
+		if p.req.Signature != nil {
+			byteData = p.req.Raw
+			pemType = "CERTIFICATE REQUEST"
+		}
+	case "ca":
+		for _, authority := range p.auth {
+			byteData = append(byteData, authority.Raw...)
+			pemType = "CERTIFICATE"
+		}
+	}
+	err := pem.Encode(pemBytes, &pem.Block{Type: pemType, Bytes: byteData})
+	Catcher(err)
 
-	//http.ServeFile(w, r, "certificate-expiration.ical", iCal)
+	return pemBytes.Bytes()
 }
 
 func (p *privateData) keyPairReq() []byte {
@@ -138,9 +158,11 @@ func main() {
 		http.HandleFunc("/add", dat.addHandler)
 		http.HandleFunc("/view", dat.viewHandler)
 		http.HandleFunc("/view/ical", dat.icalHandler)
+		http.HandleFunc("/view/cert", dat.servePemHandler)
+		http.HandleFunc("/view/csr", dat.servePemHandler)
+		http.HandleFunc("/view/key", dat.servePemHandler)
 		http.HandleFunc("/edit", dat.editHandler)
 		http.HandleFunc("/fetch", dat.fetchHandler)
-		http.HandleFunc("/config", dat.configHandler)
 		log.Fatal(http.ListenAndServe(":5000", nil))
 		url := "http://127.0.0.1:5000/"
 		if opts.ActionPrimary == "web-ui" {
