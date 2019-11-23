@@ -6,7 +6,8 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/md5"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/tls"
@@ -37,9 +38,9 @@ func Catcher(err error) {
 // getPublicKeyDigest: returns RSA public key modulus MD5 hash. TODO: support other key types
 func getPublicKeyDigest(pkey rsa.PublicKey) string {
 	hexString := fmt.Sprintf("%X", pkey.N)
-	md5sum := md5.New()
+	md5sum := sha1.New()
 	md5sum.Write([]byte(hexString))
-	digest := fmt.Sprintf("%x\n", md5sum.Sum(nil))
+	digest := fmt.Sprintf("%x\n", sha1.Sum(nil))
 	return digest
 }
 
@@ -116,13 +117,170 @@ func toPem(crypt interface{}) []byte {
 	return pemBytes.Bytes()
 }
 
-func (p *privateData) keyPairReq() []byte {
+/*
+func (k crypto.PrivateKey)alg() {
+
+}
+*/
+func pkey(pk crypto.PrivateKey) crypto.Signer {
+	var rsigner crypto.Signer
+	switch pk := pk.(type) {
+	case rsa.PrivateKey:
+		rsigner := pk.(rsa.PrivateKey)
+	case ecdsa.PrivateKey:
+		rsigner := pk.(ecdsa.PrivateKey)
+		/*	case ed25519.PrivateKey:
+			priv := pk.(ed25519.PrivateKey)
+		*/
+	default:
+		rsigner := nil
+	}
+	return rsigner
+}
+
+func (p *privateData) certCreation(requestCert []byte) x509.Certificate { // TODO use "crypto.Signer", since it can be used with a HSM (and FIPS 140-2 level 2)
+	var cert []byte
+	var err error
 	devRand, _ := os.Open("/dev/random")
 	defer devRand.Close()
+	//if the authority's key is not present then create a self signed
+	template := &x509.Certificate{
+		Subject:            p.req.Subject,
+		PublicKeyAlgorithm: p.req.PublicKeyAlgorithm,
+		PublicKey:          p.req.PublicKey,
+		SignatureAlgorithm: p.SignerAlgo(),
+	}
+	var signer crypto.Signer
+	if p.auth.key != nil {
+		signer = pkey(p.key)
+		cert, err = x509.CreateCertificate(devRand, template, template, signer.Public(), signer)
+	} else if len(p.auth.ca) >= 1 {
+		signer = pkey(p.auth.key)
+		cert, err = x509.CreateCertificate(devRand, template, &p.auth.ca[0], signer.Public(), signer)
+	}
+	Catcher(err)
+	checkcert, err := x509.ParseCertificate(cert)
+	Catcher(err)
+	return checkcert
+}
 
-	csr, genCsrErr := x509.CreateCertificateRequest(devRand, &p.req, p.key)
+// copyCert : copies an existing x509 cert as a new CSR
+func copyCert(source x509.Certificate) x509.CertificateRequest {
+	var destCert x509.CertificateRequest
+	destCert.DNSNames = source.DNSNames
+	destCert.Subject = source.Subject
+	destCert.SignatureAlgorithm = source.SignatureAlgorithm
+	destCert.EmailAddresses = source.EmailAddresses
+	destCert.IPAddresses = source.IPAddresses
+	return destCert
+}
+
+func (p *privateData) keyPairReq(csr requestCert) []byte {
+	devRand, _ := os.Open("/dev/random")
+	var err error
+	defer devRand.Close()
+	if csr.key == nil {
+		if newKey, err := rsa.GenerateKey(rand.Reader, 4096); err == nil {
+			p.key = newKey
+		} //TODO handle errors (in general haha,)
+	}
+	p.req = x509.CertificateRequest{
+		Subject: csr.Names,
+	}
+
+	req, genCsrErr := x509.CreateCertificateRequest(devRand, &p.req, p.key)
 	Catcher(genCsrErr)
+	_, err = x509.ParseCertificateRequest(req) //extra check, just to see if the CSR is correct
+	Catcher(err)
 	return csr
+}
+
+func (p *privateData) SignerAlgo() x509.SignatureAlgorithm {
+	switch pub := p.key.PublicKey().(type) {
+	case *rsa.PublicKey:
+		bitLength := pub.N.BitLen()
+		if bitLength >= 4096 || p.config.Hash == "SHA512" || p.config.Hash == "SHA5" {
+			return x509.SHA512WithRSA
+		} else if bitLength >= 3072 || p.config.Hash == "SHA384" || p.config.Hash == "SHA3" {
+			return x509.SHA384WithRSA
+		} else if bitLength >= 2048 || p.config.Hash == "SHA384" || p.config.Hash == "SHA3" {
+			return x509.SHA256WithRSA
+		} else if p.config.Hash == "SHA" || p.config.Hash == "SHA1" {
+			return x509.SHA1WithRSA
+		}
+	case *ecdsa.PublicKey:
+		if pub.Curve == elliptic.P521() || p.config.Hash == "SHA512" || p.config.Hash == "SHA5" {
+			return x509.ECDSAWithSHA512
+		} else if pub.Curve == elliptic.P384() || p.config.Hash == "SHA384" || p.config.Hash == "SHA3" {
+			return x509.ECDSAWithSHA384
+		} else if pub.Curve == elliptic.P256() || p.config.Hash == "SHA256" || p.config.Hash == "SHA2" {
+			return x509.ECDSAWithSHA256
+		} else if p.config.Hash == "SHA" || p.config.Hash == "SHA1" {
+			return x509.ECDSAWithSHA1
+		}
+	default:
+		return x509.UnknownSignatureAlgorithm
+	}
+}
+func HashAlgoString(alg x509.SignatureAlgorithm) string {
+	switch alg {
+	case x509.MD2WithRSA:
+		return "MD2"
+	case x509.MD5WithRSA:
+		return "MD5"
+	case x509.SHA1WithRSA:
+		return "SHA1"
+	case x509.SHA256WithRSA:
+		return "SHA256"
+	case x509.SHA384WithRSA:
+		return "SHA384"
+	case x509.SHA512WithRSA:
+		return "SHA512"
+	case x509.DSAWithSHA1:
+		return "SHA1"
+	case x509.DSAWithSHA256:
+		return "SHA256"
+	case x509.ECDSAWithSHA1:
+		return "SHA1"
+	case x509.ECDSAWithSHA256:
+		return "SHA256"
+	case x509.ECDSAWithSHA384:
+		return "SHA384"
+	case x509.ECDSAWithSHA512:
+		return "SHA512"
+	default:
+		return "Unknown Hash Algorithm"
+	}
+}
+func SignatureString(alg x509.SignatureAlgorithm) string {
+	switch alg {
+	case x509.MD2WithRSA:
+		return "MD2WithRSA"
+	case x509.MD5WithRSA:
+		return "MD5WithRSA"
+	case x509.SHA1WithRSA:
+		return "SHA1WithRSA"
+	case x509.SHA256WithRSA:
+		return "SHA256WithRSA"
+	case x509.SHA384WithRSA:
+		return "SHA384WithRSA"
+	case x509.SHA512WithRSA:
+		return "SHA512WithRSA"
+	case x509.DSAWithSHA1:
+		return "DSAWithSHA1"
+	case x509.DSAWithSHA256:
+		return "DSAWithSHA256"
+	case x509.ECDSAWithSHA1:
+		return "ECDSAWithSHA1"
+	case x509.ECDSAWithSHA256:
+		return "ECDSAWithSHA256"
+	case x509.ECDSAWithSHA384:
+		return "ECDSAWithSHA384"
+	case x509.ECDSAWithSHA512:
+		return "ECDSAWithSHA512"
+	default:
+		return "Unknown Signature"
+	}
 }
 
 func gatherOpts() configStore {
@@ -232,8 +390,8 @@ func parseKey(pk interface{}) pKey { //TODO support multiple key types like ed25
 	rKey.PEM = string(toPem(pk))
 	return rKey
 }
-func parseCert(c x509.Certificate) responseCert {
-	rCert := responseCert{
+func parseCert(c x509.Certificate) fullCert {
+	rCert := fullCert{
 		Subject:            parseName(c.Subject), // pkix.Name, country, org, ou, l, p, street, zip, serial, cn, extra... Additional elements in a DN can be added in via ExtraName, <=EMAIL
 		Issuer:             parseName(c.Issuer),
 		NotAfter:           c.NotAfter,
@@ -244,17 +402,6 @@ func parseCert(c x509.Certificate) responseCert {
 		Extensions:         parseExtensions(c),
 	}
 	return rCert
-}
-
-// copyCert : copies an existing x509 cert as a new CSR
-func copyCert(source x509.Certificate) x509.CertificateRequest {
-	var destCert x509.CertificateRequest
-	destCert.DNSNames = source.DNSNames
-	destCert.Subject = source.Subject
-	destCert.SignatureAlgorithm = source.SignatureAlgorithm
-	destCert.EmailAddresses = source.EmailAddresses
-	destCert.IPAddresses = source.IPAddresses
-	return destCert
 }
 
 func createOutput(crypt interface{}) []byte {

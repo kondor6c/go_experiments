@@ -20,7 +20,8 @@ type privateData struct { //TODO make this an interface!
 	options configStore
 }
 type certAuthority struct {
-	ca []x509.Certificate
+	ca  []x509.Certificate
+	key crypto.PrivateKey
 }
 
 type CertName struct {
@@ -37,38 +38,54 @@ type CertName struct {
 }
 
 type pKey struct {
-	PEM         string `json:"pem"`
-	keyRole     string `json:"key_role"`
-	strength    string `json:"strength"`
-	publicFP    string `json:"public_signature_fingerprint"`
-	FPdigest    string `json:"fingerprint_digest_type"`
-	algorithm   string `json:"algorithm"`
-	algorithmFP string `json:"fingerprint_algorithm"`
+	PEM       string `json:"pem"`
+	keyRole   string `json:"key_role"`
+	strength  string `json:"strength"`
+	publicFP  string `json:"public_signature_fingerprint"`
+	FPdigest  string `json:"fingerprint_digest_type"`
+	algorithm string `json:"algorithm"`
 }
 
-type responseCert struct {
+// a certificate authority "identity", one that has been previously detected/known like GoDaddy issuing 1, or internal company CA #5. Primary key should be sigSha1
+// This is mostly to help identify certificates, since names are like gpg uid's, the key ID/signature really matters therefore tracking the sig sha1
+type authID struct {
+	Name    string
+	Id      string
+	SigHash []byte
+}
+
+type liteCert struct {
+	name               CertName `json:"issuing_name,omitempty"`
+	Signature          string   `json:"signature_hash"`
+	SignatureAlgorithm string   `json:"sigalg"`
+	metaLink           authID   `json:"link_to_identity,omitempty"`
+}
+
+type fullCert struct {
 	Subject            CertName    `json:"subject,omitempty"`
-	Issuer             CertName    `json:"issuer,omitempty"`
+	Issuer             CertName    `json:"issuer"`
 	SerialNumber       string      `json:"serial_number,omitempty"`
 	NotBefore          time.Time   `json:"not_before"`
 	NotAfter           time.Time   `json:"not_after"`
 	SignatureAlgorithm string      `json:"sigalg"`
-	Signature          string      `json:"signature_sha1"`
+	Signature          string      `json:"signature_hash"`
 	PEM                string      `json:"pem"`
 	Key                pKey        `json:"key"`
 	Extensions         interface{} `json:"extensions,omitempty"`
 }
 
 type Extensions struct {
-	AKI      string   `json:"authority_key_id"`
-	SKI      string   `json:"subject_key_id"`
-	AltNames []string `json:"sans,omitempty"`
-	keyUsage []string `json:"key_capabilities"`
+	AKI       string         `json:"authority_key_id,omitempty"`
+	SKI       string         `json:"subject_key_id,omitempty"`
+	AltNames  []string       `json:"sans,omitempty"`
+	keyUsage  []string       `json:"key_capabilities,omitempty"`
+	extraData nonStandardExt `json:"payload,omitempty"`
 }
 
 type nonStandardExt struct {
 	nonStandardData string `json:"non_standard_data"`
 	encoding        string `json:"encoding"`
+	data            []byte
 }
 
 type configStore struct {
@@ -94,5 +111,5 @@ type requestCert struct {
 	Names    CertName    `json:"names,omitempty"`
 	Key      pKey        `json:"key,omitempty"`
 	Payload  interface{} `json:"payload,omitempty"`
-	Issuer   interface{} `json:"issuer"`
+	Issuer   interface{} `json:"issuing_link,omitempty"`
 }
