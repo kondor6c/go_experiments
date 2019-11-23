@@ -44,10 +44,9 @@ func getPublicKeyDigest(pkey rsa.PublicKey) string {
 	return digest
 }
 
-func fetchRemoteCert(connectHost string) ([]*x509.Certificate, error) { //TODO offer SOCKS and remote resolution (dialer), Golang already supports this via HTTP_PROXY?
-
+func fetchRemoteCert(proto string, cHost string, cPort string) ([]*x509.Certificate, error) { //TODO offer SOCKS and remote resolution (dialer), since Golang already supports HTTP_PROXY?
 	config := tls.Config{InsecureSkipVerify: true}
-	conn, err := tls.Dial("tcp", connectHost, &config)
+	conn, err := tls.Dial(proto, cHost+":"+cPort, &config)
 	var rerr error
 	//var sentCertificate []x509.Certificate
 	if err != nil {
@@ -117,45 +116,53 @@ func toPem(crypt interface{}) []byte {
 	return pemBytes.Bytes()
 }
 
-/*
-func (k crypto.PrivateKey)alg() {
-
+func (p *privateData) pkey() crypto.Signer {
+	switch c := p.key.(type) {
+	case *rsa.PrivateKey:
+		return interface{}(c).(crypto.Signer)
+	case *ecdsa.PrivateKey:
+		return interface{}(c).(crypto.Signer)
+	/*	case ed25519.PrivateKey:
+		priv := pk.(ed25519.PrivateKey)
+	*/
+	default:
+		return nil
+	}
 }
-*/
 func pkey(pk crypto.PrivateKey) crypto.Signer {
-	var rsigner crypto.Signer
-	switch pk := pk.(type) {
+	switch c := pk.(type) {
 	case rsa.PrivateKey:
-		rsigner := pk.(rsa.PrivateKey)
+		return interface{}(c).(crypto.Signer)
 	case ecdsa.PrivateKey:
-		rsigner := pk.(ecdsa.PrivateKey)
+		return interface{}(c).(crypto.Signer)
 		/*	case ed25519.PrivateKey:
 			priv := pk.(ed25519.PrivateKey)
 		*/
 	default:
-		rsigner := nil
+		return nil
 	}
-	return rsigner
 }
 
-func (p *privateData) certCreation(requestCert []byte) x509.Certificate { // TODO use "crypto.Signer", since it can be used with a HSM (and FIPS 140-2 level 2)
+func (p *privateData) certCreation(requestCert []byte) *x509.Certificate { // TODO use "crypto.Signer", since it can be used with a HSM (and FIPS 140-2 level 2)
 	var cert []byte
 	var err error
-	devRand, _ := os.Open("/dev/random")
+	var signer crypto.Signer
+	devRand, oerr := os.Open("/dev/random")
 	defer devRand.Close()
+	Catcher(oerr)
 	//if the authority's key is not present then create a self signed
+	signer = p.key.(crypto.Signer)
 	template := &x509.Certificate{
 		Subject:            p.req.Subject,
 		PublicKeyAlgorithm: p.req.PublicKeyAlgorithm,
 		PublicKey:          p.req.PublicKey,
-		SignatureAlgorithm: p.SignerAlgo(),
+		SignatureAlgorithm: SignerAlgo(signer.Public(), p.config.Hash), // question: does the key signing capabilities matter for the signing key or key to be issued? I think the current signing key
 	}
-	var signer crypto.Signer
 	if p.auth.key != nil {
-		signer = pkey(p.key)
+		signer = p.key.(crypto.Signer)
 		cert, err = x509.CreateCertificate(devRand, template, template, signer.Public(), signer)
 	} else if len(p.auth.ca) >= 1 {
-		signer = pkey(p.auth.key)
+		signer = p.auth.key.(crypto.Signer)
 		cert, err = x509.CreateCertificate(devRand, template, &p.auth.ca[0], signer.Public(), signer)
 	}
 	Catcher(err)
@@ -176,51 +183,50 @@ func copyCert(source x509.Certificate) x509.CertificateRequest {
 }
 
 func (p *privateData) keyPairReq(csr requestCert) []byte {
-	devRand, _ := os.Open("/dev/random")
-	var err error
-	defer devRand.Close()
-	if csr.key == nil {
-		if newKey, err := rsa.GenerateKey(rand.Reader, 4096); err == nil {
-			p.key = newKey
-		} //TODO handle errors (in general haha,)
-	}
 	p.req = x509.CertificateRequest{
-		Subject: csr.Names,
+		Subject: *csr.Names.convertPKIX(),
 	}
 
+	devRand, oerr := os.Open("/dev/random")
+	Catcher(oerr)
+	defer devRand.Close()
 	req, genCsrErr := x509.CreateCertificateRequest(devRand, &p.req, p.key)
 	Catcher(genCsrErr)
-	_, err = x509.ParseCertificateRequest(req) //extra check, just to see if the CSR is correct
+	_, err := x509.ParseCertificateRequest(req) //extra check, just to see if the CSR is correct
 	Catcher(err)
-	return csr
+	return req
 }
 
-func (p *privateData) SignerAlgo() x509.SignatureAlgorithm {
-	switch pub := p.key.PublicKey().(type) {
-	case *rsa.PublicKey:
-		bitLength := pub.N.BitLen()
-		if bitLength >= 4096 || p.config.Hash == "SHA512" || p.config.Hash == "SHA5" {
-			return x509.SHA512WithRSA
-		} else if bitLength >= 3072 || p.config.Hash == "SHA384" || p.config.Hash == "SHA3" {
-			return x509.SHA384WithRSA
-		} else if bitLength >= 2048 || p.config.Hash == "SHA384" || p.config.Hash == "SHA3" {
-			return x509.SHA256WithRSA
-		} else if p.config.Hash == "SHA" || p.config.Hash == "SHA1" {
-			return x509.SHA1WithRSA
+// take public key determine permissible algorithms, attempt user selected algorithm, can be blank
+func SignerAlgo(pub crypto.PublicKey, tryAlg string) x509.SignatureAlgorithm {
+	var rHash x509.SignatureAlgorithm
+	switch c := pub.(type) {
+	case rsa.PublicKey:
+		bitLength := interface{}(c).(rsa.PublicKey).N.BitLen()
+		if bitLength >= 4096 || tryAlg == "SHA512" || tryAlg == "SHA5" {
+			rHash = x509.SHA512WithRSA
+		} else if bitLength >= 3072 || tryAlg == "SHA384" || tryAlg == "SHA3" {
+			rHash = x509.SHA384WithRSA
+		} else if bitLength >= 2048 || tryAlg == "SHA384" || tryAlg == "SHA3" {
+			rHash = x509.SHA256WithRSA
+		} else if tryAlg == "SHA" || tryAlg == "SHA1" {
+			rHash = x509.SHA1WithRSA
 		}
-	case *ecdsa.PublicKey:
-		if pub.Curve == elliptic.P521() || p.config.Hash == "SHA512" || p.config.Hash == "SHA5" {
-			return x509.ECDSAWithSHA512
-		} else if pub.Curve == elliptic.P384() || p.config.Hash == "SHA384" || p.config.Hash == "SHA3" {
-			return x509.ECDSAWithSHA384
-		} else if pub.Curve == elliptic.P256() || p.config.Hash == "SHA256" || p.config.Hash == "SHA2" {
-			return x509.ECDSAWithSHA256
-		} else if p.config.Hash == "SHA" || p.config.Hash == "SHA1" {
-			return x509.ECDSAWithSHA1
+	case ecdsa.PublicKey:
+		curve := interface{}(c).(ecdsa.PublicKey).Curve
+		if curve == elliptic.P521() || tryAlg == "SHA512" || tryAlg == "SHA5" {
+			rHash = x509.ECDSAWithSHA512
+		} else if curve == elliptic.P384() || tryAlg == "SHA384" || tryAlg == "SHA3" {
+			rHash = x509.ECDSAWithSHA384
+		} else if curve == elliptic.P256() || tryAlg == "SHA256" || tryAlg == "SHA2" {
+			rHash = x509.ECDSAWithSHA256
+		} else if tryAlg == "SHA" || tryAlg == "SHA1" {
+			rHash = x509.ECDSAWithSHA1
 		}
 	default:
-		return x509.UnknownSignatureAlgorithm
+		rHash = x509.UnknownSignatureAlgorithm
 	}
+	return rHash
 }
 func HashAlgoString(alg x509.SignatureAlgorithm) string {
 	switch alg {
@@ -349,6 +355,19 @@ func main() {
 	parseCert(dat.cert)
 }
 
+func (c *CertName) convertPKIX() *pkix.Name {
+	rName := &pkix.Name{
+		Country:            []string{c.Country},
+		Organization:       []string{c.Organization},
+		OrganizationalUnit: []string{c.OrganizationalUnit},
+		Locality:           []string{c.Locality},
+		Province:           []string{c.Province},
+		StreetAddress:      []string{c.StreetAddress},
+		PostalCode:         []string{c.PostalCode},
+		CommonName:         c.CommonName,
+	}
+	return rName
+}
 func parseName(n pkix.Name) CertName {
 	name := CertName{
 		CommonName:         n.CommonName,
@@ -370,8 +389,21 @@ func parseExtensions(c x509.Certificate) Extensions {
 	}
 	return e
 }
-func parseKey(pk interface{}) pKey { //TODO support multiple key types like ed25519 and more
-	rKey := pKey{}
+
+// Parse the key portion of the config "Key"
+func (p *privateData) configKey(jk jKey) {
+	if len(jk.PEM) <= 1 {
+		devRand, oerr := os.Open("/dev/random")
+		Catcher(oerr)
+		defer devRand.Close()
+		if newKey, err := rsa.GenerateKey(rand.Reader, 4096); err == nil {
+			Catcher(err)
+			p.key = newKey
+		} //TODO handle errors (in general haha,)
+	}
+}
+func resultingKey(pk interface{}) jKey { //TODO support multiple key types like ed25519 and more, should I parse the actual PEM key now and potentially call key creation?
+	rKey := jKey{}
 	switch k := pk.(type) {
 	case rsa.PrivateKey:
 		rKey.keyRole = "PrivateKey"
@@ -386,6 +418,9 @@ func parseKey(pk interface{}) pKey { //TODO support multiple key types like ed25
 	case ecdsa.PublicKey:
 		rKey.keyRole = "PublicKey"
 		rKey.algorithm = "ecdsa"
+	case ecdsa.PrivateKey:
+		rKey.keyRole = "PrivateKey"
+		rKey.algorithm = "ecdsa"
 	}
 	rKey.PEM = string(toPem(pk))
 	return rKey
@@ -396,7 +431,7 @@ func parseCert(c x509.Certificate) fullCert {
 		Issuer:             parseName(c.Issuer),
 		NotAfter:           c.NotAfter,
 		NotBefore:          c.NotBefore,
-		Key:                parseKey(c.PublicKey),
+		Key:                resultingKey(c.PublicKey),
 		SignatureAlgorithm: "c.SignatureAlgorithm",
 		Signature:          fmt.Sprintf("%v", sha1.Sum(c.Signature)),
 		Extensions:         parseExtensions(c),
@@ -412,7 +447,7 @@ func createOutput(crypt interface{}) []byte {
 			jsonOut = j
 		}
 	case rsa.PrivateKey:
-		if j, err := json.Marshal(parseKey(t)); err == nil {
+		if j, err := json.Marshal(resultingKey(t)); err == nil {
 			jsonOut = j
 		}
 	}

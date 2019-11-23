@@ -72,15 +72,15 @@ func (p *privateData) mainHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *privateData) fetchHandler(w http.ResponseWriter, r *http.Request) {
-	connectString := r.FormValue("rAddress") + ":" + r.FormValue("rPort")
 	var err error
-	rCert, err := fetchRemoteCert(connectString)
+	rCert, err := fetchRemoteCert("tcp", r.FormValue("rAddress"), r.FormValue("rPort"))
+
 	if err != nil {
 		log.Println("unable to get remote certificate")
 	}
 	//verifiedRemoteChain := getChain(rCert)
 	p.cert = *rCert[0] //dereference
-	log.Printf("Fetched remote %s \n", connectString)
+	log.Printf("Fetched remote %s \n", r.FormValue("rAddress"))
 	http.Redirect(w, r, "/view", http.StatusTemporaryRedirect)
 
 }

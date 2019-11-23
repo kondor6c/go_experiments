@@ -32,6 +32,41 @@
     "sigalg": {
       "type": "string",
       "description": "Hash Digest followed by format of the key"
-    }
+    },
+    "pem": {
+		"type": "type",
+		"description": "KEY pem block"
+	},
+    "key_role": {
+		"type": "string",
+		"description": "KEY role, is this a client TLS certificate key? is this a server or a CA"
+	},
+    "public_signature_fingerprint": {
+		"type": "string",
+		"description": "KEY SHA1/MD5 sum of the public key"
+	},
+    "fingerprint_algorithm": {
+		"type": "string",
+		"description": "KEY whether the signature fingerprint is MD5 or SHA1"
+	},
+    "algorithm": {
+		"type": "string",
+		"description": "KEY the underlying algorithm like RSA or ed25519"
+	},
+
+
+    "common_name": {
+		"type": "string",
+		"description": "ISSUER Name"
+	},
+    "signature": {
+		"type": "string",
+		"description": "ISSUER Signature"
+	},
+    "signature_type": {
+		"type": "string"
+		"description": "ISSUER Signature algorithm, 'type' of signature and how to validate it"
   }
 }
+
+

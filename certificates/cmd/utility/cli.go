@@ -20,7 +20,7 @@ func decideRoute(c configStore) *privateData {
 	if curAction.key != nil && curAction.mainAction == "copy" { //I still do not know how to check if x509.Certificate is not nil, (anonymous struct?)
 		//curAction.cert.CheckSignature(//checkSig see if key matches cert
 		curAction.req = copyCert(curAction.cert)
-		curAction.keyPairReq()
+		//curAction.keyPairReq()
 	} else if curAction.key != nil && curAction.mainAction == "gen-template" {
 
 	} else if curAction.mainAction == "edit-csr" {

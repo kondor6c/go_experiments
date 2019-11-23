@@ -19,6 +19,11 @@ type privateData struct { //TODO make this an interface!
 
 	options configStore
 }
+
+type privKey interface {
+	regularKey() crypto.PrivateKey
+}
+
 type certAuthority struct {
 	ca  []x509.Certificate
 	key crypto.PrivateKey
@@ -37,7 +42,7 @@ type CertName struct {
 	//Names              []interface{} `json:"names,omitempty"`
 }
 
-type pKey struct {
+type jKey struct {
 	PEM       string `json:"pem"`
 	keyRole   string `json:"key_role"`
 	strength  string `json:"strength"`
@@ -52,6 +57,11 @@ type authID struct {
 	Name    string
 	Id      string
 	SigHash []byte
+}
+type remoteURI struct {
+	Host     string
+	Port     int
+	Protocol string
 }
 
 type liteCert struct {
@@ -70,7 +80,7 @@ type fullCert struct {
 	SignatureAlgorithm string      `json:"sigalg"`
 	Signature          string      `json:"signature_hash"`
 	PEM                string      `json:"pem"`
-	Key                pKey        `json:"key"`
+	Key                jKey        `json:"key"`
 	Extensions         interface{} `json:"extensions,omitempty"`
 }
 
@@ -103,13 +113,14 @@ type configStore struct {
 
 type requestCert struct {
 	Role     string      `json:"role"`
+	PEM      string      `json:"pem",omitempty`
 	Duration string      `json:"duration,omitempty"`
 	Encoding string      `json:"encoding,omitempty"`
 	Hash     string      `json:"hash"`
 	CN       string      `json:"CN,omitempty"`
 	Hosts    []string    `json:"hosts"`
 	Names    CertName    `json:"names,omitempty"`
-	Key      pKey        `json:"key,omitempty"`
+	Key      jKey        `json:"key,omitempty"`
 	Payload  interface{} `json:"payload,omitempty"`
 	Issuer   interface{} `json:"issuing_link,omitempty"`
 }

@@ -29,19 +29,20 @@
 				"algorithm": ""
 			},
 			"Extentions": [{
-			    "sans": [
-			    	"cloudflare.com",
-			    	"www.cloudflare.com"
-			    ],
+				"sans": [
+					"cloudflare.com",
+					"www.cloudflare.com"
+				],
 				"trusted_ca_keys": [{
 					"name": "",
 					"certificate_hash": ""
 				}],
-				"key_capabilities": ["server","client","CA"]
+				"key_capabilities": ["server","client","CA"],
+				"Non_Standard_Extension": {
+					"data":"",
+					"encoding": ""
+				}
 			}],
-			"Non_Standard_Extension": {
-				"ASN":""
-			},
 			"subject": {
 				"country": "US",
 				"locality": "San Francisco",
