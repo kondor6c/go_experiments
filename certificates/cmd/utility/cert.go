@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"database/sql"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -26,6 +27,9 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Catcher : Generic Catch all, better than just discarding errors
@@ -316,11 +320,48 @@ func gatherOpts() configStore {
 	return *opt
 }
 
+var db *sql.DB
+
+func dbinit() {
+	dbPass := os.Getenv("DBPASS")
+	dbUser := os.Getenv("DBUSER")
+	dbHost := os.Getenv("DBHOST")
+	var schema = `
+	CREATE TABLE IF NOT EXISTS public_keys (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host_name text,
+		connect_uri text,
+		detected date DEFAULT NOW(),
+		key_type text,
+		cert_details text,
+		fingerprint_digest text,
+		fingerprint text
+	);
+	
+	CREATE TABLE IF NOT EXISTS cert_authority (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		alias text,
+		key text,
+		parent integer,
+		serial text,
+		duration date
+	)`
+	var dberr error
+
+	if len(dbPass) < 1 || len(dbUser) < 1 || len(dbHost) < 1 {
+		db, dberr = sql.Open("sqlite3", ":memory:")
+	} else {
+		db, dberr = sql.Open("mysql", dbUser+":"+dbPass+"@tcp("+dbHost+"/multicheck")
+		Catcher(dberr)
+	}
+	db.Exec(schema)
+}
 func main() {
 	var optCertIn string
 	var err error
 	opts := gatherOpts()
 	dat := decideRoute(opts)
+	dbinit()
 
 	if opts.ActionPrimary == "web-ui" || opts.ActionPrimary == "web-server" {
 		http.HandleFunc("/", dat.mainHandler)
@@ -331,6 +372,9 @@ func main() {
 		http.HandleFunc("/view/csr", dat.servePemHandler)
 		http.HandleFunc("/view/key", dat.servePemHandler)
 		http.HandleFunc("/api", dat.respondJSONHandler)
+		http.HandleFunc("/api/cert", dat.x509CertHandler)
+		http.HandleFunc("/api/cert/remote", dat.remoteURLHandler)
+		http.HandleFunc("/api/key", dat.privateKeyHandler)
 		http.HandleFunc("/edit", dat.editHandler)
 		http.HandleFunc("/fetch", dat.fetchHandler)
 		log.Fatal(http.ListenAndServe(":5000", nil))
