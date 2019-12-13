@@ -29,26 +29,36 @@ type certAuthority struct {
 	key crypto.PrivateKey
 }
 
+type user struct {
+	ID       int      `json:"id,omitempty"  db:"id"`
+	Username *string  `json:"username,omitempty"  db:"username"`
+	Name     *string  `json:"name,omitempty"  db:"name"`
+	Email    *string  `json:"email,omitempty"  db:"email"`
+	Groups   []string `json:"groups,omitempty" db:"groups"`
+	Password *string  `json:"password,omitempty"  db:"password"`
+}
 type CertName struct {
-	CommonName         string `json:"common_name,omitempty"`
-	SerialNumber       string `json:"serial_number,omitempty"`
-	Country            string `json:"country,omitempty"`
-	Organization       string `json:"organization,omitempty"`
-	OrganizationalUnit string `json:"organizational_unit,omitempty"`
-	Locality           string `json:"locality,omitempty"`
-	Province           string `json:"province,omitempty"`
-	StreetAddress      string `json:"street_address,omitempty"`
-	PostalCode         string `json:"postal_code,omitempty"`
+	CommonName         string `json:"common_name,omitempty" db:"common_name"`
+	SerialNumber       string `json:"serial_number,omitempty" db:"serial_number"`
+	Country            string `json:"country,omitempty" db:"country"`
+	Organization       string `json:"organization,omitempty" db:"organization"`
+	OrganizationalUnit string `json:"organizational_unit,omitempty" db:"organizational_unit"`
+	Locality           string `json:"locality,omitempty" db:"locality"`
+	Province           string `json:"province,omitempty" db:"province"`
+	StreetAddress      string `json:"street_address,omitempty" db:"street_address"`
+	PostalCode         string `json:"postal_code,omitempty" db:"postal_code"`
+	Business           string //2.5.4.15
+	Email              string //1.2.840.113549.1.9.1
 	//Names              []interface{} `json:"names,omitempty"`
 }
 
 type jKey struct {
-	PEM       string `json:"pem"`
-	keyRole   string `json:"key_role"`
-	strength  string `json:"strength"`
-	publicFP  string `json:"public_signature_fingerprint"`
-	FPdigest  string `json:"fingerprint_digest_type"`
-	algorithm string `json:"algorithm"`
+	PEM       string `json:"pem" db:"pem"`
+	KeyRole   string `json:"key_role" db:"key_role"`
+	Strength  string `json:"strength" db:"strength"`
+	PublicFP  string `json:"public_signature_fingerprint" db:"public_fp"`
+	FPdigest  string `json:"fingerprint_digest_type" db:"fp_hash_type"`
+	Algorithm string `json:"algorithm" db:"algorithm"`
 }
 
 // a certificate authority "identity", one that has been previously detected/known like GoDaddy issuing 1, or internal company CA #5. Primary key should be sigSha1
@@ -59,41 +69,49 @@ type authID struct {
 	SigHash []byte
 }
 type remoteURI struct {
-	Host     string
-	Port     int
-	Protocol string
+	Host     string `json:"host" db:"remote_host"`
+	Port     int    `json:"port" db:"remote_port"`
+	Protocol string `json:"protocol" db:"remote_protocol"`
 }
 
 type liteCert struct {
-	name               CertName `json:"issuing_name,omitempty"`
-	Signature          string   `json:"signature_hash"`
-	SignatureAlgorithm string   `json:"sigalg"`
-	metaLink           authID   `json:"link_to_identity,omitempty"`
+	Name          CertName `json:"issuing_name,omitempty" db:""`
+	Fingerprint   string   `json:"fingerprint" db:"fingerprint"`
+	SignatureHash string   `json:"fp_hash" db:"fp_hash"`
+	metaLink      authID   `json:"link_to_identity,omitempty" db:"db_id"`
+}
+
+type fullOutput struct {
+	Certs     []fullCert  `json:"certs"`
+	Keys      []jKey      `json:"keys"`
+	CertAuths []liteCert  `json:"authorities"`
+	Meta      interface{} `json:"meta_info"`
 }
 
 type fullCert struct {
-	Subject            CertName    `json:"subject,omitempty"`
-	Issuer             CertName    `json:"issuer"`
-	SerialNumber       string      `json:"serial_number,omitempty"`
-	NotBefore          time.Time   `json:"not_before"`
-	NotAfter           time.Time   `json:"not_after"`
-	SignatureAlgorithm string      `json:"sigalg"`
-	Signature          string      `json:"signature_hash"`
-	PEM                string      `json:"pem"`
-	Key                jKey        `json:"key"`
-	Extensions         interface{} `json:"extensions,omitempty"`
+	Subject            CertName   `json:"subject,omitempty" db:""`
+	Issuer             CertName   `json:"issuer" db:""`
+	SerialNumber       string     `json:"serial_number,omitempty" db:"serial_number"`
+	NotBefore          time.Time  `json:"not_before" db:"not_before"`
+	NotAfter           time.Time  `json:"not_after" db:"not_after"`
+	SignatureAlgorithm string     `json:"sigalg" db:"signature_algorithm"`
+	Signature          string     `json:"signature_hash" db:"signature"`
+	PEM                string     `json:"pem" db:"pem"`
+	Key                jKey       `json:"key" db:""`
+	Extensions         Extensions `json:"extensions,omitempty" db:""`
 }
 
 type Extensions struct {
-	AKI       string         `json:"authority_key_id,omitempty"`
-	SKI       string         `json:"subject_key_id,omitempty"`
-	AltNames  []string       `json:"sans,omitempty"`
-	keyUsage  []string       `json:"key_capabilities,omitempty"`
-	extraData nonStandardExt `json:"payload,omitempty"`
+	AKI       string         `json:"authority_key_id,omitempty" db:"authority_key_id"`
+	SKI       string         `json:"subject_key_id,omitempty" db:"subject_key_id"`
+	AltNames  string         `json:"alt_names_string,omitempty" db:"alt_names"`
+	Sans      []string       `json:"sans,omitempty" db:"sans"`
+	KeyUsage  []string       `json:"key_capabilities,omitempty" db:"key_usage"`
+	ExtraData nonStandardExt `json:"payload,omitempty" db:""`
 }
 
 type nonStandardExt struct {
-	nonStandardData string `json:"non_standard_data"`
+	NonStandardData string `json:"non_standard_data" db:"non_standard_data"`
 	encoding        string `json:"encoding"`
 	data            []byte
 }

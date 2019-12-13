@@ -29,11 +29,11 @@
 				"algorithm": ""
 			},
 			"Extentions": [{ //Extentions
-			    "sans": [
+			    "sans": [ //AltNames
 		    		"cloudflare.com",
 	    			"www.cloudflare.com"
 			    ],
-				"trusted_ca_keys": [{ //slimCert
+				"trusted_ca_keys": [{ //liteCert
 					"name": "",
 					"certificate_hash": ""
 				}],

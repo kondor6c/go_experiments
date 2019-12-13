@@ -13,7 +13,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"database/sql"
+	"encoding/asn1"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -24,13 +25,13 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
+	"strconv"
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/mattn/go-sqlite3"
 )
+
+var DebugSet = false
 
 // Catcher : Generic Catch all, better than just discarding errors
 func Catcher(err error) {
@@ -89,9 +90,16 @@ func (p *privateData) addPem(dataPem *pem.Block) {
 }
 
 func toPem(crypt interface{}) []byte {
+	// for ref: https://stackoverflow.com/questions/20065304/differences-between-begin-rsa-private-key-and-begin-private-key
 	pemBytes := new(bytes.Buffer)
 	var byteData []byte
 	var pemType string
+	var err error
+
+	if DebugSet == true {
+		log.Printf("converting to pem:  %T\n", crypt)
+	}
+
 	switch t := crypt.(type) {
 	case x509.Certificate:
 		if t.Signature != nil {
@@ -99,10 +107,13 @@ func toPem(crypt interface{}) []byte {
 			pemType = "CERTIFICATE"
 		}
 	case rsa.PrivateKey:
-		//if t != nil {
 		byteData = x509.MarshalPKCS1PrivateKey(&t)
-		pemType = "PRIVATE KEY"
-		//}
+		pemType = "RSA PRIVATE KEY"
+	case rsa.PublicKey:
+		byteData, err = asn1.Marshal(t)
+		//Should NOT be hit, because the cert should only have valid data, I don't know how it couldn't be valid
+		Catcher(err)
+		pemType = "RSA PUBLIC KEY"
 	case x509.CertificateRequest:
 		if t.Signature != nil {
 			byteData = t.Raw
@@ -114,7 +125,7 @@ func toPem(crypt interface{}) []byte {
 			pemType = "CERTIFICATE"
 		}
 	}
-	err := pem.Encode(pemBytes, &pem.Block{Type: pemType, Bytes: byteData})
+	err = pem.Encode(pemBytes, &pem.Block{Type: pemType, Bytes: byteData})
 	Catcher(err)
 
 	return pemBytes.Bytes()
@@ -232,36 +243,6 @@ func SignerAlgo(pub crypto.PublicKey, tryAlg string) x509.SignatureAlgorithm {
 	}
 	return rHash
 }
-func HashAlgoString(alg x509.SignatureAlgorithm) string {
-	switch alg {
-	case x509.MD2WithRSA:
-		return "MD2"
-	case x509.MD5WithRSA:
-		return "MD5"
-	case x509.SHA1WithRSA:
-		return "SHA1"
-	case x509.SHA256WithRSA:
-		return "SHA256"
-	case x509.SHA384WithRSA:
-		return "SHA384"
-	case x509.SHA512WithRSA:
-		return "SHA512"
-	case x509.DSAWithSHA1:
-		return "SHA1"
-	case x509.DSAWithSHA256:
-		return "SHA256"
-	case x509.ECDSAWithSHA1:
-		return "SHA1"
-	case x509.ECDSAWithSHA256:
-		return "SHA256"
-	case x509.ECDSAWithSHA384:
-		return "SHA384"
-	case x509.ECDSAWithSHA512:
-		return "SHA512"
-	default:
-		return "Unknown Hash Algorithm"
-	}
-}
 func SignatureString(alg x509.SignatureAlgorithm) string {
 	switch alg {
 	case x509.MD2WithRSA:
@@ -313,87 +294,39 @@ func gatherOpts() configStore {
 	//flagSet.Var(&optMap["List"], "None", "list of options to pass delimiter ',' [not implemented]")
 	flag.StringVar(&opt.CaOut, "CA-out", "None", "action to take")
 	flag.Parse()
-	log.Printf("obtained arguments: %s", os.Args)
+	if DebugSet == true {
+		log.Printf("obtained arguments: %s", os.Args)
+	}
 	if flag.NFlag() < 1 && os.Stdin == nil {
 		flag.PrintDefaults()
 	}
 	return *opt
 }
 
-var db *sql.DB
-
-func dbinit() {
-	dbPass := os.Getenv("DBPASS")
-	dbUser := os.Getenv("DBUSER")
-	dbHost := os.Getenv("DBHOST")
-	var schema = `
-	CREATE TABLE IF NOT EXISTS public_keys (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		host_name text,
-		connect_uri text,
-		detected date DEFAULT NOW(),
-		key_type text,
-		cert_details text,
-		fingerprint_digest text,
-		fingerprint text
-	);
-	
-	CREATE TABLE IF NOT EXISTS cert_authority (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		alias text,
-		key text,
-		parent integer,
-		serial text,
-		duration date
-	)`
-	var dberr error
-
-	if len(dbPass) < 1 || len(dbUser) < 1 || len(dbHost) < 1 {
-		db, dberr = sql.Open("sqlite3", ":memory:")
-	} else {
-		db, dberr = sql.Open("mysql", dbUser+":"+dbPass+"@tcp("+dbHost+"/multicheck")
-		Catcher(dberr)
-	}
-	db.Exec(schema)
-}
 func main() {
 	var optCertIn string
-	var err error
 	opts := gatherOpts()
 	dat := decideRoute(opts)
 	dbinit()
-
+	if opts.ActionSecondary == "debug" {
+		DebugSet = true
+	}
 	if opts.ActionPrimary == "web-ui" || opts.ActionPrimary == "web-server" {
-		http.HandleFunc("/", dat.mainHandler)
-		http.HandleFunc("/add", dat.addHandler)
-		http.HandleFunc("/view", dat.viewHandler)
-		http.HandleFunc("/view/ical", dat.icalHandler)
-		http.HandleFunc("/view/cert", dat.servePemHandler)
-		http.HandleFunc("/view/csr", dat.servePemHandler)
-		http.HandleFunc("/view/key", dat.servePemHandler)
-		http.HandleFunc("/api", dat.respondJSONHandler)
-		http.HandleFunc("/api/cert", dat.x509CertHandler)
-		http.HandleFunc("/api/cert/remote", dat.remoteURLHandler)
-		http.HandleFunc("/api/key", dat.privateKeyHandler)
-		http.HandleFunc("/edit", dat.editHandler)
-		http.HandleFunc("/fetch", dat.fetchHandler)
-		log.Fatal(http.ListenAndServe(":5000", nil))
-		url := "http://127.0.0.1:5000/"
-		if opts.ActionPrimary == "web-ui" {
-			// Yanked from a gist, totally suits my needs here
-			switch runtime.GOOS {
-			case "linux":
-				err = exec.Command("xdg-open", url).Start()
-			case "windows":
-				err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-			case "darwin":
-				err = exec.Command("open", url).Start()
-			default:
-				err = fmt.Errorf("unsupported platform")
-			}
-			Catcher(err)
-		}
-
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", dat.mainHandler)
+		mux.HandleFunc("/add", dat.addHandler)
+		mux.HandleFunc("/view", dat.viewHandler)
+		mux.HandleFunc("/view/ical", dat.icalHandler)
+		mux.HandleFunc("/view/cert", dat.servePemHandler)
+		mux.HandleFunc("/view/csr", dat.servePemHandler)
+		mux.HandleFunc("/view/key", dat.servePemHandler)
+		mux.HandleFunc("/api", dat.respondJSONHandler)
+		mux.HandleFunc("/api/cert", dat.x509CertHandler)
+		mux.HandleFunc("/api/cert/remote", dat.remoteURLHandler)
+		mux.HandleFunc("/api/key", dat.privateKeyHandler)
+		mux.HandleFunc("/edit", dat.editHandler)
+		mux.HandleFunc("/fetch", dat.fetchHandler)
+		log.Fatal(http.ListenAndServe(":5000", mux))
 	}
 	fmt.Println(optCertIn)
 	parseCert(dat.cert)
@@ -427,9 +360,15 @@ func parseName(n pkix.Name) CertName {
 	return name
 }
 func parseExtensions(c x509.Certificate) Extensions {
+	sans := c.EmailAddresses
+	for _, ip := range c.IPAddresses {
+		sans = append(sans, ip.String())
+	}
+	sans = append(sans, c.DNSNames...)
 	e := Extensions{
-		AltNames: c.DNSNames,
-		keyUsage: []string{"c.ExtKeyUsage"},
+		Sans:     sans,
+		AltNames: strings.Join(sans, ","),
+		KeyUsage: []string{"c.ExtKeyUsage"},
 	}
 	return e
 }
@@ -448,53 +387,82 @@ func (p *privateData) configKey(jk jKey) {
 }
 func resultingKey(pk interface{}) jKey { //TODO support multiple key types like ed25519 and more, should I parse the actual PEM key now and potentially call key creation?
 	rKey := jKey{}
-	switch k := pk.(type) {
-	case rsa.PrivateKey:
-		rKey.keyRole = "PrivateKey"
-		rKey.publicFP = fmt.Sprintf("%v", sha1.Sum(k.PublicKey.N.Bytes()))
-		rKey.FPdigest = "sha1"
-		rKey.algorithm = "rsa"
-	case rsa.PublicKey:
-		rKey.keyRole = "PublicKey"
-		rKey.publicFP = fmt.Sprintf("%v", sha1.Sum(k.N.Bytes()))
-		rKey.FPdigest = "sha1"
-		rKey.algorithm = "rsa"
-	case ecdsa.PublicKey:
-		rKey.keyRole = "PublicKey"
-		rKey.algorithm = "ecdsa"
-	case ecdsa.PrivateKey:
-		rKey.keyRole = "PrivateKey"
-		rKey.algorithm = "ecdsa"
+	if DebugSet == true {
+		log.Printf("%T\n", pk)
 	}
-	rKey.PEM = string(toPem(pk))
+	switch k := pk.(type) {
+	case *rsa.PrivateKey:
+		rKey.KeyRole = "PrivateKey"
+		rKey.PublicFP = fmt.Sprintf("%v", sha1.Sum(k.PublicKey.N.Bytes()))
+		rKey.FPdigest = "sha1"
+		rKey.Algorithm = "rsa"
+	case *rsa.PublicKey:
+		rKey.Algorithm = "rsa"
+		h := sha1.New()
+		h.Write(k.N.Bytes())
+		hash := h.Sum(nil)
+		rKey.PEM = string(toPem(*k))
+		rKey.Strength = strconv.Itoa(k.N.BitLen())
+		rKey.PublicFP = hex.EncodeToString(hash)
+	case *ecdsa.PublicKey:
+		rKey.KeyRole = "PublicKey"
+		rKey.Algorithm = "ecdsa"
+	case *ecdsa.PrivateKey:
+		rKey.KeyRole = "PrivateKey"
+		rKey.Algorithm = "ecdsa"
+	case ecdsa.PublicKey:
+		rKey.Algorithm = "ecdsa"
+		h := sha1.New()
+		h.Write(k.X.Bytes())
+		rKey.Strength = k.Params().Name
+		hash := h.Sum(nil)
+		rKey.PublicFP = hex.EncodeToString(hash)
+	}
 	return rKey
 }
 func parseCert(c x509.Certificate) fullCert {
+	keyVal := resultingKey(c.PublicKey)
+	h := sha1.New()
+	h.Write(c.Signature)
+	hash := h.Sum(nil)
+	sig := SignatureString(c.SignatureAlgorithm)
+	if DebugSet == true {
+		log.Printf("cert's key is: %v", keyVal)
+	}
 	rCert := fullCert{
 		Subject:            parseName(c.Subject), // pkix.Name, country, org, ou, l, p, street, zip, serial, cn, extra... Additional elements in a DN can be added in via ExtraName, <=EMAIL
 		Issuer:             parseName(c.Issuer),
 		NotAfter:           c.NotAfter,
 		NotBefore:          c.NotBefore,
-		Key:                resultingKey(c.PublicKey),
-		SignatureAlgorithm: "c.SignatureAlgorithm",
-		Signature:          fmt.Sprintf("%v", sha1.Sum(c.Signature)),
+		Key:                keyVal,
+		SignatureAlgorithm: sig,
+		Signature:          hex.EncodeToString(hash),
 		Extensions:         parseExtensions(c),
 	}
 	return rCert
 }
 
-func createOutput(crypt interface{}) []byte {
+func createOutput(crypt ...interface{}) []byte {
 	var jsonOut []byte
-	switch t := crypt.(type) {
-	case x509.Certificate:
-		if j, err := json.Marshal(parseCert(t)); err == nil {
-			jsonOut = j
-		}
-	case rsa.PrivateKey:
-		if j, err := json.Marshal(resultingKey(t)); err == nil {
-			jsonOut = j
+	var err error
+	cryptObject := &fullOutput{}
+	cryptObject.Certs = make([]fullCert, 0)
+
+	for _, i := range crypt {
+		switch t := i.(type) {
+		case x509.Certificate:
+			//if j, err := json.Marshal(parseCert(t)); err == nil {
+			//	log.Println(j)
+			cryptObject.Certs = append(cryptObject.Certs, parseCert(t))
+			//}
+		case rsa.PrivateKey:
+			//if j, err := json.Marshal(resultingKey(t)); err == nil {
+			cryptObject.Keys = append(cryptObject.Keys, resultingKey(t))
+			//}
 		}
 	}
+	jsonOut, err = json.Marshal(cryptObject)
+	Catcher(err)
 	return jsonOut
 }
 
@@ -533,24 +501,3 @@ func getChain(certs []x509.Certificate) [][]*x509.Certificate {
 	}
 	return verifiedBundle
 }
-
-/////////////////////////////////////////////////////////////////////////////////////////
-/* Revisit, I am spending too much time on trying to get this signature decrypted.
-The goal was to see if the key given, matched the certificate. I would still like to do this.
-steps: unhash signature, take public key decrypt unhashed,
-unHashSig(x509Cert.Signature, x509Cert.SignatureAlgorithm)
-func decryptSig(signature []byte, algorithm int, pubKey ) { //OR can I do SignatureAlgorithm...
-	signature.
-	algorithm.
-	var pub
-	if algorithm == x509.SHA256WithRSA {
-		pub := rsa.PublicKey()
-	} else if algorithm == x509.ECDSAWithSHA256 {
-
-	} else if algorithm == x509.SHA256WithRSA {
-
-	} else {
-		return
-
-	return pub
-} */

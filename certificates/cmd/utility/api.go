@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
-	"crypto"
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 )
 
 //POST, PEM cert, respond with cert details
@@ -23,28 +23,53 @@ func (p *privateData) respondJSONHandler(w http.ResponseWriter, r *http.Request)
 	defer r.Body.Close()
 }
 
-func recordKey(pubkey crypto.PublicKey) {
-	ins, _ := db.Prepare("INSERT INTO public_keys (host_name, connect_uri, detected, key_type, cert_details, public_key, fingerprint_sha) VALUES (?, ?, ?, ?, ?, ?, ?)")
-	ins.Exec()
-}
 func (p *privateData) remoteURLHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	remoteLocation := &remoteURI{}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	var remoteLocation remoteURI
+	log.Printf("here's what we got:")
+	//log.Println(string(r.Body))
 
-	if err := json.NewDecoder(r.Body).Decode(remoteLocation); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&remoteLocation); err != nil {
 		log.Println("error at json, TODO correctly handle this! ")
 		WebCatcher(w, err)
 		return
 	}
-
+	strPort := strconv.Itoa(remoteLocation.Port)
 	defer r.Body.Close()
-	rCert, err := fetchRemoteCert(remoteLocation.Protocol, remoteLocation.Host, string(remoteLocation.Port))
+	log.Printf("host %v   port %v", remoteLocation.Host, strPort)
+
+	rCert, err := fetchRemoteCert(remoteLocation.Protocol, remoteLocation.Host, strPort)
 	Catcher(err)
 	//verifiedRemoteChain := getChain(rCert)
 	p.cert = *rCert[0] //dereference
-	w.Write(createOutput(p.cert))
-	recordKey(p.cert.PublicKey)
+	jsonOutput := createOutput(p.cert)
+	log.Printf("%v", string(jsonOutput))
+	w.Write(jsonOutput)
+	if len(rCert) > 1 {
+		go recordIssuer(rCert) // This would be nice to make concurrent!!
+	}
+	recordRemoteCert(p.cert, remoteLocation)
 	log.Printf("Fetched remote %s and returned JSON \n", remoteLocation.Host)
+
+}
+func (p *privateData) remoteCertIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	log.Printf("we got: %v", r.Body)
+	qCert := &fullCert{} //a query for a certificate
+	if err := json.NewDecoder(r.Body).Decode(&qCert); err != nil {
+		log.Println("error at json, TODO correctly handle this! ")
+		WebCatcher(w, err)
+		return
+	}
+	certResults := certLookup(*qCert)
+	resultingJson := createOutput(certResults)
+
+	w.Write(resultingJson)
+	defer r.Body.Close()
 
 }
 
@@ -52,6 +77,8 @@ func (p *privateData) remoteURLHandler(w http.ResponseWriter, r *http.Request) {
 // GET
 func (p *privateData) privateKeyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Write(createOutput(p.cert))
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(p.config); err != nil {
@@ -64,6 +91,8 @@ func (p *privateData) privateKeyHandler(w http.ResponseWriter, r *http.Request) 
 // GET
 func (p *privateData) x509CertHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Write(createOutput(p.cert))
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(p.config); err != nil {
@@ -80,8 +109,9 @@ https://github.com/agola-io/agola/blob/master/internal/services/runservice/api/a
 // easy, better is the http
 func WebCatcher(w http.ResponseWriter, err error) {
 	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("error"))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		log.Fatal(err)
-		return
+		log.Println(err)
 	}
 }
